@@ -1,17 +1,23 @@
 from fastapi import FastAPI, Depends  # 🌟 Adicione o ", Depends" aqui!
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 from app.db.database import engine
 from app.db.base_class import Base
 from app.db import models 
+
 from app.api.dependencies import get_db
+
+from app.api.endpoints import auth
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Autenticação"])
 
 # 🚀 Evento que roda assim que o FastAPI inicializa
 @app.on_event("startup")
