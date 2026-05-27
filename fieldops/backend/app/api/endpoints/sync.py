@@ -1,0 +1,1 @@
+#Endpoint para sincronização de dados do PWA offline

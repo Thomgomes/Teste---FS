@@ -1,0 +1,1 @@
+#Endpoint para gerenciamento de visitas, incluindo criação, leitura, atualização e cancelamento de visitas.
