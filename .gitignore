@@ -1,0 +1,27 @@
+# --- Docker e Banco de Dados ---
+.docker/
+*data/
+postgres_data/
+minio_data/
+
+# --- Python / Backend ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+env/
+venv/
+.env
+
+# --- Node / Frontends ---
+node_modules/
+dist/
+.eslintcache
+.cascade/
+
+# --- Sistema Operacional ---
+.DS_Store
+Thumbs.db
+.vscode/
