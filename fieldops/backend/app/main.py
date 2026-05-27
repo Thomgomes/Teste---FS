@@ -10,7 +10,7 @@ from app.db import models
 from app.db.seeds import run_seeds
 
 from app.api.dependencies import get_db
-from app.api.endpoints import auth
+from app.api.endpoints import auth, visits, sync, public
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -19,6 +19,12 @@ app = FastAPI(
 )
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Autenticação"])
+
+app.include_router(visits.router, prefix=f"{settings.API_V1_STR}/visits", tags=["Visitas"])
+
+app.include_router(sync.router, prefix=f"{settings.API_V1_STR}/sync", tags=["Sincronização Offline"])
+
+app.include_router(public.router, prefix=f"{settings.API_V1_STR}/public", tags=["Acompanhamento Público"])
 
 # 🚀 Evento que roda assim que o FastAPI inicializa
 @app.on_event("startup")
