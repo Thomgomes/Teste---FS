@@ -3,12 +3,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.database import engine
+
+from app.db.database import engine, AsyncSessionLocal
 from app.db.base_class import Base
 from app.db import models 
+from app.db.seeds import run_seeds
 
 from app.api.dependencies import get_db
-
 from app.api.endpoints import auth
 
 app = FastAPI(
@@ -27,6 +28,10 @@ async def startup_event():
         # Esse comando cria FISICAMENTE todas as tabelas no Postgres se elas não existirem
         await conn.run_sync(Base.metadata.create_all)
     print("====== TABELAS CRIADAS COM SUCESSO ======")
+    
+    # Executa os seeds abrindo uma sessão rápida isolada para o boot
+    async with AsyncSessionLocal() as session:
+        await run_seeds(session)
 
 @app.get("/")
 async def root(db: AsyncSession = Depends(get_db)):
