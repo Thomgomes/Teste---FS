@@ -1,0 +1,83 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: fieldops-db
+    environment:
+      POSTGRES_USER: fieldops_user
+      POSTGRES_PASSWORD: fieldops_password
+      POSTGRES_DB: fieldops_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldops_user -d fieldops_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  storage:
+    image: minio/minio
+    container_name: fieldops-storage
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: minio_password
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: fieldops-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://fieldops_user:fieldops_password@db:5432/fieldops_platform
+      - MINIO_ENDPOINT=http://storage:9000
+      - MINIO_ACCESS_KEY=minio_admin
+      - MINIO_SECRET_KEY=minio_password
+      - JWT_SECRET=chave_secreta_super_segura_para_o_desafio_2026
+    depends_on:
+      db:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+  frontend-admin:
+    build: ./frontend/admin
+    container_name: fieldops-frontend-admin
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/admin:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+  frontend-pwa:
+    build: ./frontend/pwa
+    container_name: fieldops-frontend-pwa
+    restart: always
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./frontend/pwa:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  minio_data:
