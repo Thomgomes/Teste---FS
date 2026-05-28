@@ -49,10 +49,51 @@
 
 ## 3. Uso de Inteligência Artificial e Validação
 
+Durante o desenvolvimento do MVP do FieldOps, ferramentas de Inteligência Artificial (LLMs) foram integradas de forma estratégica ao fluxo de trabalho do desenvolvedor, atuando estritamente como um acelerador de produtividade e co-piloto de engenharia, e não como gerador cego de código.
+
+### Onde a IA foi Aplicada
+* **Estruturação de Boilerplates Assíncronos:** Aceleração na escrita das configurações iniciais do SQLAlchemy 2.0 Async (`AsyncSession`, `create_async_engine`) e mapeamento declarativo dos enums do PostgreSQL.
+* **Geração de Massa de Dados para Testes:** Auxílio na criação de payloads complexos de sincronização em lote e simulação de dados fictícios (CNPJs válidos, UUIDs e timestamps) para os testes do Pytest.
+* **Desenho de Cenários Limítrofes (Edge Cases):** Discussão de abordagens arquiteturais para o tratamento do conflito concorrente "Admin cancela online vs. Técnico conclui offline", refinando os payloads de retorno da API.
+
+### Como os Resultados foram Validados
+Nenhum artefato gerado por IA foi integrado ao repositório sem validação rigorosa através de três camadas de checagem:
+* **Validação Estática e Tipagem:** Varredura estática com `mypy` e verificação de schemas via Pydantic v2 para garantir que as estruturas de dados seguiam os padrões estritos do Python moderno.
+* **Inspeção de Queries SQL (Logs do SQLAlchemy):** Monitoramento ativo do console do Docker para auditar se o SQLAlchemy estava executando os comandos assíncronos de forma otimizada (verificando a ocorrência de problemas como queries N+1 ou conexões presas).
+* **Execução Verde da Suíte de Testes:** A validação definitiva deu-se através da execução com sucesso dos testes automatizados de integração, garantindo que o comportamento real do sistema condizia exatamente com as regras de negócio desenhadas.
+
 ---
 
 ## 4. Limitações Conhecidas da Solução
 
+Como este projeto se trata de um MVP (Mínimo Produto Viável) focado em validar as premissas arquiteturais essenciais sob restrições de tempo, existem limitações conhecidas que necessitam de refinamento antes de uma promoção para ambiente produtivo de larga escala:
+
+### Estratégia de Expiração de Chaves de Idempotência
+Atualmente, as chaves de idempotência persistem por tempo indeterminado no banco. Em produção, isso causaria um inchaço desnecessário na tabela de eventos. O ideal seria mover o cache de chaves para o Redis com um TTL (Time-To-Live) estrito de 24 a 48 horas.
+
+### Falta de Paginação Nativa no Sync de Lote
+A rota `/api/v1/sync/` assume que o lote de eventos offline acumulado pelo dispositivo não ultrapassará limites razoáveis de payload de rede. Se um técnico passar semanas offline e gerar milhares de eventos, o payload de sincronização pode estourar o buffer da requisição, exigindo uma paginação de descarregamento na camada do PWA.
+
+### Gerenciamento de Segredos (Secret Management)
+Chaves de criptografia e credenciais de banco de dados estão parametrizadas diretamente no arquivo `.env` local do repositório para facilitar a execução imediata pelo avaliador. Em produção, esses dados devem ser extraídos e gerenciados por um cofre de segredos dedicado (AWS Secrets Manager, HashiCorp Vault ou GCP Secret Manager).
+
+### Sincronização Unidirecional Abrangente
+O PWA é excelente em enviar dados offline para o servidor (upload de eventos), mas a atualização contrária — puxar novas visitas atribuídas enquanto o aplicativo está aberto — depende de um refresh manual ou de um mecanismo de polling que precisa ser robustecido para WebSockets ou Server-Sent Events (SSE) para suportar tempo real estrito.
+
 ---
 
 ## 5. Perguntas para Stakeholders (Simulação de Projeto Real)
+
+Se este MVP fosse o início de um desdobramento real em escala corporativa, as seguintes perguntas técnicas e de produto seriam direcionadas aos respectivos times para alinhar o roadmap:
+
+### Perguntas para o Product Manager (PM)
+* **Regra de Negócio Próxima ao Conflito:** "Quando houver um conflito onde o técnico conclui uma visita que já foi cancelada pela central, o sistema deve apenas registrar o log de auditoria ou devemos disponibilizar uma tela de conciliação manual no painel para o Admin decidir se aceita o faturamento do serviço prestado?"
+* **Anexos e Custos:** "O limite de até 20 fotos de 5MB por visita é uma necessidade real de auditoria de campo ou podemos aplicar uma compressão agressiva de imagem no lado do cliente (PWA) antes do upload para reduzir drasticamente os custos de armazenamento e o consumo do plano de dados móveis do técnico?"
+
+### Perguntas para o Tech Lead
+* **Evolução do Multi-Tenancy:** "A projeção de crescimento de 10x (500 empresas) está confortável no isolamento lógico por linha, mas caso entrem clientes de nível Enterprise com volumetria massiva, podemos planejar uma migração híbrida onde esses clientes específicos ganham um Banco/Schema dedicado, mantendo os clientes de menor porte no Schema único?"
+* **Estratégia de Cache:** "Devemos introduzir uma camada de cache via Redis à frente das consultas de listagem de visitas do painel Admin para mitigar consultas repetitivas ao PostgreSQL, estabelecendo uma política de invalidação baseada em eventos?"
+
+### Perguntas para o Time de SRE / Infraestrutura
+* **Políticas de TTL e Cold Storage:** "Para conter os custos do Object Storage (S3) com terabytes de fotos de visitas retroativas, podemos configurar uma regra de ciclo de vida (Lifecycle Policy) para mover imagens com mais de 90 dias automaticamente para classes de armazenamento mais baratas (como AWS Glacier)?"
+* **Auto-Scaling Triggers:** "Dado o perfil de tráfego agressivo de sincronização simultânea ao fim do expediente dos técnicos, quais métricas devemos priorizar para os gatilhos de auto-scaling dos containers da API: uso de CPU/Memória ou contagem de conexões ativas no pool do banco de dados?"
