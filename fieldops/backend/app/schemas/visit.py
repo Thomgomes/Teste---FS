@@ -1,37 +1,43 @@
 #Arquivo do schema para validar os dados da visita.
 
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from uuid import UUID
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import uuid
+from typing import List, Optional
 from app.db.models import VisitStatus
 
-class VisitBase(BaseModel):
-    client_name: str = Field(..., max_length=255)
+class VisitCreate(BaseModel):
+    client_name: str
     address: str
+    technician_id: uuid.UUID
     scheduled_at: datetime
 
-class VisitCreate(VisitBase):
-    technician_id: UUID
-
 class VisitEventResponse(BaseModel):
-    id: UUID
-    company_id: UUID
+    id: uuid.UUID
     event_type: str
     description: Optional[str]
     created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+class VisitAttachmentResponse(BaseModel):
+    id: uuid.UUID
+    file_url: str
+    uploaded_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class VisitResponse(VisitBase):
-    id: UUID
-    company_id: UUID
-    technician_id: UUID
+class VisitResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    technician_id: uuid.UUID
     status: VisitStatus
-    public_token: UUID
+    client_name: str
+    address: str
+    public_token: uuid.UUID
+    scheduled_at: datetime
     updated_at: datetime
     events: List[VisitEventResponse] = []
+    attachments: List[VisitAttachmentResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

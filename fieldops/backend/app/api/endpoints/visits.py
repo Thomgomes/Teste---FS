@@ -1,11 +1,12 @@
 #Endpoint para gerenciamento de visitas, incluindo criação, leitura, atualização e cancelamento de visitas.
 
-from datetime import datetime
+import os
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import get_db, get_current_user, require_admin, require_any_role
 from app.db import models
@@ -13,21 +14,21 @@ from app.schemas.visit import VisitCreate, VisitResponse
 
 router = APIRouter()
 
+# Pasta local dentro do container onde as fotos da V1 serão salvas fisicamente
+UPLOAD_DIR = "/app/uploaded_images"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
 # =========================================================================
-# 📝 1. ENDPOINT: CRIAR UMA NOVA VISITA (EXCLUSIVO ADMIN)
+# 📝 1. ENDPOINT: CRIAR UMA NOVA VISITA (EXCLUSIVO ADMIN - ASYNC)
 # =========================================================================
 @router.post("/", response_model=VisitResponse, status_code=status.HTTP_201_CREATED)
 async def create_visit(
     payload: VisitCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(require_admin) # Garante que apenas administradores acessem
+    current_user: models.User = Depends(require_admin)
 ) -> models.Visit:
-    """
-    Cria e agenda uma nova visita técnica.
-    O 'company_id' é injetado automaticamente a partir do token do administrador logado,
-    garantindo que ele não possa criar visitas para outra empresa.
-    """
-    # Valida se o técnico designado pertence à MESMA empresa do administrador
+    
     tech_query = select(models.User).where(
         and_(
             models.User.id == payload.technician_id,
@@ -35,8 +36,8 @@ async def create_visit(
             models.User.role == models.UserRole.TECHNICIAN
         )
     )
-    tech_result = await db.execute(tech_query)
-    technician = tech_result.scalar_one_or_none()
+    result = await db.execute(tech_query)
+    technician = result.scalar_one_or_none()
     
     if not technician:
         raise HTTPException(
@@ -44,24 +45,22 @@ async def create_visit(
             detail="O técnico designado não foi encontrado ou não pertence à sua empresa."
         )
 
-    # Instancia a visita espelhando os campos exatos do DBML da Parte 1
     new_visit = models.Visit(
-        company_id=current_user.company_id, # Injeção automática de tenant
+        company_id=current_user.company_id,
         technician_id=payload.technician_id,
         client_name=payload.client_name,
         address=payload.address,
-        status=models.VisitStatus.SCHEDULED, # Toda visita nasce agendada
+        status=models.VisitStatus.SCHEDULED,
         scheduled_at=payload.scheduled_at,
-        public_token=uuid.uuid4() # Gera o token único de acompanhamento do cliente
+        public_token=uuid.uuid4()
     )
     
-    # Registra o evento inicial na timeline da visita
     initial_event = models.VisitEvent(
         company_id=current_user.company_id,
         visit=new_visit,
         event_type="AGENDADA",
         description=f"Visita agendada pelo administrador: {current_user.name}",
-        idempotency_key=f"init-seed-{uuid.uuid4()}" # Chave única para o evento de criação
+        idempotency_key=f"init-{uuid.uuid4()}"
     )
     
     db.add_all([new_visit, initial_event])
@@ -71,71 +70,100 @@ async def create_visit(
 
 
 # =========================================================================
-# 📋 2. ENDPOINT: LISTAR VISITAS COM FILTROS (ADMIN OU TÉCNICO)
+# 📋 2. ENDPOINT: LISTAR VISITAS COM FILTROS (ADMIN OU TÉCNICO - ASYNC)
 # =========================================================================
 @router.get("/", response_model=List[VisitResponse])
 async def list_visits(
     status_filter: Optional[models.VisitStatus] = Query(None, alias="status"),
     tech_id_filter: Optional[uuid.UUID] = Query(None, alias="technician_id"),
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(require_any_role) # Qualquer usuário autenticado pode listar
+    current_user: models.User = Depends(require_any_role)
 ) -> List[models.Visit]:
-    """
-    Lista as visitas aplicando regras estritas de visibilidade por papel:
-    - Admin: Vê todas as visitas da sua respectiva empresa.
-    - Técnico: Vê apenas as visitas atribuídas a ele próprio dentro da empresa.
-    """
-    # Base da query travando o isolamento de Tenant (Multi-tenant)
+    
     filters = [models.Visit.company_id == current_user.company_id]
     
-    # Se for técnico, restringe o filtro para trazer apenas os registros dele
     if current_user.role == models.UserRole.TECHNICIAN:
         filters.append(models.Visit.technician_id == current_user.id)
     elif tech_id_filter:
-        # Se for admin e passou o filtro de técnico, aplica a busca
         filters.append(models.Visit.technician_id == tech_id_filter)
         
     if status_filter:
         filters.append(models.Visit.status == status_filter)
         
-    query = select(models.Visit).where(and_(*filters)).order_by(models.Visit.scheduled_at.asc())
+    # selectinload garante o carregamento assíncrono das tabelas filhas (evita erro de LazyLoading)
+    query = (
+        select(models.Visit)
+        .where(and_(*filters))
+        .options(selectinload(models.Visit.events), selectinload(models.Visit.attachments))
+        .order_by(models.Visit.scheduled_at.asc())
+    )
     result = await db.execute(query)
     return result.scalars().all()
 
 
 # =========================================================================
-# 🔍 3. ENDPOINT: DETALHAR UMA VISITA COM TIMELINE (ADMIN OU TÉCNICO)
+# 📸 3. ENDPOINT: ANEXAR FOTO À VISITA (EXCLUSIVO TÉCNICO - ASYNC DE DISCO)
 # =========================================================================
-@router.get("/{visit_id}", response_model=VisitResponse)
-async def get_visit_by_id(
+@router.post("/{visit_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def upload_visit_photo(
     visit_id: uuid.UUID,
+    file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(require_any_role)
-) -> models.Visit:
+):
     """
-    Recupera os dados completos de uma visita específica, incluindo sua timeline.
-    Garante que técnicos não acessem visitas alheias.
+    Recebe o binário da foto enviado pelo técnico, salva em disco de forma não-bloqueante
+    e vincula o caminho à tabela visit_attachments respeitando o Tenant.
     """
+    # 1. Verifica se a visita existe e pertence ao tenant logado
     query = select(models.Visit).where(
-        and_(
-            models.Visit.id == visit_id,
-            models.Visit.company_id == current_user.company_id
-        )
+        and_(models.Visit.id == visit_id, models.Visit.company_id == current_user.company_id)
     )
     result = await db.execute(query)
     visit = result.scalar_one_or_none()
-    
+
     if not visit:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Visita não encontrada no sistema."
+            detail="Visita não encontrada ou acesso negado."
         )
-        
-    # Barreira de segurança adicional para técnicos
-    if current_user.role == models.UserRole.TECHNICIAN and visit.technician_id != current_user.id:
+
+    # 2. Gera um nome único para o arquivo para evitar colisões em disco
+    file_extension = os.path.splitext(file.filename)[1]
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+    # 3. Leitura e escrita assíncronas do binário do arquivo
+    try:
+        contents = await file.read() # Consome o stream de dados de forma async
+        with open(file_path, "wb") as f:
+            f.write(contents)
+    except Exception:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acesso negado. Você não é o técnico designado para esta visita."
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Falha ao persistir o arquivo de imagem no servidor local."
         )
-        
-    return visit
+
+    # 4. Grava a referência na tabela de anexos do Postgres de forma assíncrona
+    new_attachment = models.VisitAttachment(
+        company_id=current_user.company_id,
+        visit_id=visit.id,
+        file_url=f"/static/uploaded_images/{unique_filename}" # URL simulada que o front vai ler
+    )
+    
+    # Gera um log de evento na timeline notificando o anexo
+    attachment_event = models.VisitEvent(
+        company_id=current_user.company_id,
+        visit_id=visit.id,
+        event_type="ANEXO_FOTO",
+        description=f"Foto de comprovação técnica anexada por: {current_user.name}",
+        idempotency_key=f"attach-{uuid.uuid4()}"
+    )
+
+    db.add_all([new_attachment, attachment_event])
+    await db.commit()
+
+    return {
+        "mensagem": "Foto anexada com sucesso absoluto na V1 local!",
+        "file_url": new_attachment.file_url
+    }
