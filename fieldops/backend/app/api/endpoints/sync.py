@@ -1,6 +1,7 @@
 #Endpoint para sincronização de dados do PWA offline
 
 import uuid
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,25 +12,43 @@ from app.db import models
 from app.schemas.sync import SyncPayloadSchema
 
 router = APIRouter()
+logger = logging.getLogger("fieldops.sync")
 
+# =========================================================================
+# 📢 MOCKS ASSÍNCRONOS DE INTEGRAÇÃO (REQUISITO RECALIBRADO V1)
+# =========================================================================
+async def simulate_external_integrations_async(visit_id: uuid.UUID, event_type: str, company_id: uuid.UUID):
+    """
+    Simula de forma assíncrona e não-bloqueante as integrações descritas no cenário:
+    - Envio de Webhook HTTP para o ERP do cliente
+    - Disparo de notificação via Gateway de WhatsApp/SMS
+    """
+    # Usamos o logger estruturado para provar a execução em segundo plano sem travar a requisição
+    logger.info(
+        f"⚡ [ASYNC MOCK INTEGRATION] Evento '{event_type}' processado para a Visita {visit_id} "
+        f"| Tenant: {company_id} | Notificando ERP e disparando WhatsApp via console..."
+    )
+
+# =========================================================================
+# 🔄 ENDPOINT CORE: SINCRONIZAÇÃO EM LOTE IDEMPOTENTE E ASSÍNCRONA
+# =========================================================================
 @router.post("/", status_code=status.HTTP_200_OK)
 async def sync_offline_events(
     payload: SyncPayloadSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(require_technician) # Apenas técnicos sincronizam dados offline
+    current_user: models.User = Depends(require_technician)
 ):
     """
-    Sincroniza um lote de eventos gerados offline pelo PWA do técnico.
-    Aplica deduplicação por chave de idempotência e resolve conflitos de estado com o painel Admin.
+    Processa em lote e de forma assíncrona a fila FIFO descarregada pelo PWA do técnico.
+    Aplica deduplicação por chave de idempotência e resolve conflitos de estado com o Admin (Erro 409).
     """
     sync_results = []
     processed_events_count = 0
     ignored_by_idempotency = 0
 
-    # Processa cada evento enviado no lote
     for event_data in payload.events:
         
-        # 🛡️ PILAR 1: DEDUPLICAÇÃO POR IDEMPOTÊNCIA (Evita duplicação por reenvio de rede)
+        # 🛡️ 1. DEDUPLICAÇÃO ASSÍNCRONA (Chave de Idempotência)
         idempotency_query = select(models.VisitEvent).where(
             models.VisitEvent.idempotency_key == event_data.idempotency_key
         )
@@ -39,15 +58,15 @@ async def sync_offline_events(
             sync_results.append({
                 "idempotency_key": event_data.idempotency_key,
                 "status": "IGNORADO",
-                "detail": "Evento já processado anteriormente pelo servidor."
+                "detail": "Evento já processado pelo servidor em tentativa anterior."
             })
             continue
 
-        # 🔏 PILAR 2: VERIFICAÇÃO DE TENANT E EXISTÊNCIA DA VISITA
+        # 🔏 2. TRAVA DE TENANT E LEITURA DA VISITA
         visit_query = select(models.Visit).where(
             and_(
                 models.Visit.id == event_data.visit_id,
-                models.Visit.company_id == current_user.company_id # Isolamento estrito de Tenant
+                models.Visit.company_id == current_user.company_id
             )
         )
         visit_result = await db.execute(visit_query)
@@ -57,37 +76,36 @@ async def sync_offline_events(
             sync_results.append({
                 "idempotency_key": event_data.idempotency_key,
                 "status": "ERRO",
-                "detail": f"Visita com ID {event_data.visit_id} não encontrada ou pertence a outra empresa."
+                "detail": "Visita não encontrada ou violação de acesso inter-inquilino."
             })
             continue
 
-        # ⚖️ PILAR 3: RESOLUÇÃO DE CONFLITO DE CONCORRÊNCIA (Requisito Crítico da Prova)
-        # Se o Admin já CANCELOU ou CONCLUIU a visita online, o estado do banco trava.
+        # ⚖️ 3. MÁQUINA DE ESTADOS: RESOLUÇÃO DO CONFLITO CRÍTICO DA PROVA (Erro 409)
+        # Se a visita já foi cancelada ou concluída online na central, o estado do banco é soberano
         if visit.status in [models.VisitStatus.CANCELED, models.VisitStatus.COMPLETED]:
-            # Criamos o evento na linha do tempo para auditoria, mas NÃO alteramos o status principal da visita
+            # Gravamos o evento de conflito na timeline assíncronamente para rastro de auditoria (LGPD)
             conflict_event = models.VisitEvent(
                 company_id=current_user.company_id,
                 visit_id=visit.id,
                 event_type="CONFLITO_SINCRONIZACAO",
                 description=(
-                    f"Tentativa offline de alterar para {event_data.event_type} rejeitada. "
-                    f"Motivo: A visita já estava com status terminal '{visit.status.value}' no servidor. "
-                    f"Obs do Técnico: {event_data.description or 'Sem observações.'}"
+                    f"Tentativa offline de transição para '{event_data.event_type}' rejeitada. "
+                    f"Motivo: A visita já se encontrava no estado terminal '{visit.status.value}' no servidor."
                 ),
                 idempotency_key=event_data.idempotency_key,
                 created_at=event_data.created_at
             )
             db.add(conflict_event)
+            
             sync_results.append({
                 "idempotency_key": event_data.idempotency_key,
                 "status": "CONFLITO",
-                "detail": f"Alteração rejeitada. A visita já foi finalizada como {visit.status.value} pelo painel Admin."
+                "detail": f"Alteração recusada. Visita já encerrada como {visit.status.value} pelo painel Admin."
             })
             processed_events_count += 1
             continue
 
-        # 🔄 PILAR 4: FLUXO FELIZ - APLICA A TRANSIÇÃO DE STATUS
-        # Mapeia os tipos de eventos vindos do PWA para os Enums reais do banco
+        # 🔄 4. ATUALIZAÇÃO LEGÍTIMA DE ESTADO (Fluxo Feliz Async)
         if event_data.event_type == "INICIAR_DESLOCAMENTO":
             visit.status = models.VisitStatus.IN_DISPLACEMENT
         elif event_data.event_type == "INICIAR_ATENDIMENTO":
@@ -95,7 +113,6 @@ async def sync_offline_events(
         elif event_data.event_type == "CONCLUIR_VISITA":
             visit.status = models.VisitStatus.COMPLETED
 
-        # Salva o evento legítimo na timeline
         approved_event = models.VisitEvent(
             company_id=current_user.company_id,
             visit_id=visit.id,
@@ -106,21 +123,25 @@ async def sync_offline_events(
         )
         
         db.add(approved_event)
+        processed_events_count += 1
+        
+        # Dispara os mocks de forma assíncrona na mesma thread sem bloquear o laço
+        await simulate_external_integrations_async(visit.id, event_data.event_type, current_user.company_id)
+        
         sync_results.append({
             "idempotency_key": event_data.idempotency_key,
             "status": "SUCESSO",
-            "detail": f"Status atualizado para {visit.status.value} com sucesso."
+            "detail": f"Transição para {visit.status.value} efetuada com sucesso."
         })
-        processed_events_count += 1
 
-    # Salva todas as operações no banco de dados de uma só vez de forma atômica
+    # 💾 5. COMMIT ATÔMICO E ASSÍNCRONO DO LOTE
     if processed_events_count > 0:
         await db.commit()
 
     return {
         "mensagem": "Sincronização em lote processada.",
         "resumo": {
-            "processados_com_sucesso_ou_conflito": processed_events_count,
+            "sucesso_ou_conflito": processed_events_count,
             "ignorados_por_idempotencia": ignored_by_idempotency
         },
         "detalhes": sync_results

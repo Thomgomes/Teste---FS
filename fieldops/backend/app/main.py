@@ -22,7 +22,7 @@ app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Aut
 
 app.include_router(visits.router, prefix=f"{settings.API_V1_STR}/visits", tags=["Visitas"])
 
-app.include_router(sync.router, prefix=f"{settings.API_V1_STR}/sync", tags=["Sincronização Offline"])
+app.include_router(sync.router, prefix=f"{settings.API_V1_STR}/sync", tags=["Sincronização Offline PWA"])
 
 app.include_router(public.router, prefix=f"{settings.API_V1_STR}/public", tags=["Acompanhamento Público"])
 

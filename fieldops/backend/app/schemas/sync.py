@@ -1,15 +1,15 @@
 #Arquivo do schema para validar lote de dados de eventos do PWA.
 
+from pydantic import BaseModel
 from datetime import datetime
-from uuid import UUID
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import uuid
+from typing import List, Optional
 
 class OfflineEventSchema(BaseModel):
-    visit_id: UUID
+    visit_id: uuid.UUID
     event_type: str
     description: Optional[str] = None
-    idempotency_key: str = Field(..., max_length=255)
+    idempotency_key: str
     created_at: datetime
 
 class SyncPayloadSchema(BaseModel):
