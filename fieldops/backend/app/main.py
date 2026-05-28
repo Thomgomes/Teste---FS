@@ -2,6 +2,8 @@ from fastapi import FastAPI, Depends  # 🌟 Adicione o ", Depends" aqui!
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.core.config import settings
 
 from app.db.database import engine, AsyncSessionLocal
@@ -16,6 +18,14 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Autenticação"])
