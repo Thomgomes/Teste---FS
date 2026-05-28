@@ -1,44 +1,49 @@
 import asyncio
 import pytest
+import pytest_asyncio
+
+import random
+
 from typing import AsyncGenerator
-from httpx import AsyncClient, ASGIIterport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.main import app
-from app.core.config import settings
-from app.db.base_class import Base
 from app.api.dependencies import get_db
+from app.db.base_class import Base
 from app.core import security
 from app.db import models
 
-# Força o pytest a rodar os testes assíncronos no mesmo loop de eventos
+# Configura o escopo do loop de eventos para casar com as chamadas assíncronas do Pytest
 @pytest.fixture(scope="session")
 def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
-# 🛢️ Fixture para criar uma sessão de banco isolada para os testes
-@pytest.fixture(scope="function")
+# 🛢️ FIXTURE: Gerencia a sessão de banco de dados isolada por caso de teste
+@pytest_asyncio.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    # Usaremos o mesmo engine configurado, mas abrindo uma transação isolada
     from app.db.database import engine
+    
+    # Cria uma conexão limpa e garante as tabelas para a suíte de testes
     async with engine.begin() as conn:
-        # Garante que as tabelas estão limpas/prontas para o cenário do teste
         await conn.run_sync(Base.metadata.create_all)
         
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)()
+    
     try:
         yield async_session
     finally:
-        # Dá rollback forçado para o teste anterior não sujar o próximo
+        # Ponto sênior: Dá ROLLBACK forçado ao fim de cada função de teste
+        # para que um cenário nunca suje o estado do banco do próximo teste
         await async_session.rollback()
         await async_session.close()
 
-# 🚀 Fixture que monta o cliente HTTP para disparar requisições contra o FastAPI
-@pytest.fixture(scope="function")
+# 🚀 FIXTURE: Cliente HTTP assíncrono apontando para o app FastAPI
+@pytest_asyncio.fixture(scope="function")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    # Sobrescreve a dependência do get_db do FastAPI para usar a nossa sessão controlada de teste
+    # Injeta a nossa sessão de teste isolada substituindo a dependência real de produção
     async def _override_get_db():
         try:
             yield db_session
@@ -47,50 +52,68 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             
     app.dependency_overrides[get_db] = _override_get_db
     
-    # Criamos o cliente HTTP assíncrono apontando para o app FastAPI
-    async with AsyncClient(transport=ASGIIterport(app), base_url="http://test") as ac:
+    # ASGIIterport faz o cliente simular chamadas de rede direto na memória do app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
         
-    # Limpa a sobrescrita após o término do teste
     app.dependency_overrides.clear()
 
-# 👥 FIXTURE EXTRA: Cria uma empresa e usuários fake para os testes usarem de munição
-@pytest.fixture(scope="function")
+# 👥 FIXTURE DE MUNIÇÃO: Cria dados falsos estruturados para testar regras complexas
+@pytest_asyncio.fixture(scope="function")
 async def test_data(db_session: AsyncSession):
-    # Empresa Teste
-    company = models.Company(name="Empresa Teste LTDA", cnpj="99999999000199")
-    db_session.add(company)
+    rand_suffix = random.randint(1000, 9999)
+    
+    # Provedor padrão para Empresa A
+    company_a = models.Company(name="Empresa Alfa Logística", cnpj=f"1111111100{rand_suffix}")
+    db_session.add(company_a)
     await db_session.flush()
 
-    # Admin Teste
-    admin = models.User(
-        company_id=company.id,
-        name="Admin Teste",
-        email="admin.teste@test.com",
+    admin_a = models.User(
+        company_id=company_a.id,
+        name="Admin Alfa",
+        email=f"admin.alfa_{rand_suffix}@fieldops.com.br",
         password_hash=security.get_password_hash("senha123"),
         role=models.UserRole.ADMIN
     )
-    # Técnico Teste
-    tech = models.User(
-        company_id=company.id,
-        name="Tech Teste",
-        email="tech.teste@test.com",
+    tech_a = models.User(
+        company_id=company_a.id,
+        name="Técnico Alfa",
+        email=f"tech.alfa_{rand_suffix}@fieldops.com.br",
         password_hash=security.get_password_hash("senha123"),
         role=models.UserRole.TECHNICIAN
     )
-    db_session.add_all([admin, tech])
+    db_session.add_all([admin_a, tech_a])
     await db_session.flush()
 
-    # Cria os tokens JWT correspondentes para os cabeçalhos de autorização
-    admin_token = security.create_access_token(subject=str(admin.id))
-    tech_token = security.create_access_token(subject=str(tech.id))
+    # Provedor padrão para Empresa B (Inquilino Isolado para testar Cross-Tenant)
+    company_b = models.Company(name="Empresa Beta Vistorias", cnpj=f"2222222200{rand_suffix}")
+    db_session.add(company_b)
+    await db_session.flush()
+
+    tech_b = models.User(
+        company_id=company_b.id,
+        name="Técnico Beta",
+        email=f"tech.beta_{rand_suffix}@fieldops.com.br",
+        password_hash=security.get_password_hash("senha123"),
+        role=models.UserRole.TECHNICIAN
+    )
+    db_session.add(tech_b)
+    await db_session.flush()
+
+    # Gera os tokens JWT válidos e assina os headers necessários para simular requisições HTTP
+    token_admin_a = security.create_access_token(subject=str(admin_a.id))
+    token_tech_a = security.create_access_token(subject=str(tech_a.id))
+    token_tech_b = security.create_access_token(subject=str(tech_b.id))
 
     await db_session.commit()
 
     return {
-        "company": company,
-        "admin": admin,
-        "tech": tech,
-        "headers_admin": {"Authorization": f"Bearer {admin_token}"},
-        "headers_tech": {"Authorization": f"Bearer {tech_token}"}
+        "company_a": company_a,
+        "company_b": company_b,
+        "admin_a": admin_a,
+        "tech_a": tech_a,
+        "tech_b": tech_b,
+        "headers_admin_a": {"Authorization": f"Bearer {token_admin_a}"},
+        "headers_tech_a": {"Authorization": f"Bearer {token_tech_a}"},
+        "headers_tech_b": {"Authorization": f"Bearer {token_tech_b}"}
     }
