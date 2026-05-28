@@ -65,8 +65,23 @@ async def create_visit(
     
     db.add_all([new_visit, initial_event])
     await db.commit()
-    await db.refresh(new_visit)
-    return new_visit
+    
+    # Em vez do refresh cego, fazemos uma query explícita trazendo as tabelas filhas de forma segura
+    from sqlalchemy.orm import selectinload
+    refresh_query = (
+        select(models.Visit)
+        .where(models.Visit.id == new_visit.id)
+        .options(
+            selectinload(models.Visit.events),
+            selectinload(models.Visit.attachments)
+        )
+    )
+    refresh_result = await db.execute(refresh_query)
+    visit_pronta = refresh_result.scalar_one()
+    
+    return visit_pronta
+
+# arrumar o nome escrito nessa coisa aq em cima
 
 
 # =========================================================================
