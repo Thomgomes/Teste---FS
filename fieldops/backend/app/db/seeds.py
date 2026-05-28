@@ -15,7 +15,7 @@ async def run_seeds(db: AsyncSession) -> None:
     # 1. Checa se o banco já possui dados para evitar duplicidade no reload
     query_check = select(models.Company)
     result_check = await db.execute(query_check)
-    if result_check.scalar_one_or_none() is not None:
+    if result_check.scalars().first() is not None:
         print("🌱 [SEEDS] Banco de dados já possui registros. Operação abortada.")
         return
 
