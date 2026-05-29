@@ -3,7 +3,23 @@
 **Projeto**: FieldOps
 **Autor:** Thomás D'Angelo de Almeida Gomes
 
+### Visão alvo vs solução entregue
+
+Este documento descreve a **arquitetura alvo** da FieldOps (pensada para escala 10x, integrações e observabilidade completa).  
+A implementação do desafio prático, porém, entrega uma **MVP/V1 local** mais enxuta, focada em:
+
+- Backend em FastAPI + PostgreSQL.
+- Web Admin em React.
+- PWA do técnico em React com fila offline.
+- Página pública do cliente por token.
+- Upload de fotos em disco local servidas pelo próprio backend.
+
+Elementos como MinIO/S3, Redis Queue, workers de background, integrações com ERP/WhatsApp e stack completa de observabilidade aparecem como **evolução planejada (V2 +)** e não fazem parte da entrega atual.  
+Essa separação é deliberada: a prova pede uma fatia vertical funcional; o documento registra como essa fatia evolui sem reescrita total.
+
 ## 1. Diagrama de Arquitetura de Software
+
+Este diagrama representa a arquitetura alvo da FieldOps (V2). A implementação do desafio prático entrega um subconjunto reduzido (MVP/V1), descrito no Roadmap e detalhado no NOTAS.md.
 
 <!-- O Diagrama foi projetado, construido e ajustado no "https://mermaid.ai/" -->
 
@@ -133,13 +149,26 @@ flowchart TD
 
 ### ADR 03: Arquitetura de Upload e Processamento de Mídias
 
-- **Contexto:** Os técnicos podem anexar até 20 fotos de 5MB por visita operacional. Em um cenário de 30.000 visitas/dia, o tráfego estimado pode alcançar 3TB de binários por dia. Trafegar arquivos pesados por dentro do interpretador da API Python estrangularia a largura de banda da aplicação, causando indisponibilidade geral.
-- **Opções Consideradas:**
-  1. _Upload Tradicional via API:_ O PWA envia o binário para o FastAPI e o FastAPI o grava no S3. Descartado pelo alto consumo de I/O e bloqueio de threads de rede da aplicação.
-  2. _Direct Upload via URLs Pré-Assinadas (Presigned URLs):_ A API emite um token de autorização temporário e o cliente faz o upload direto para o servidor de arquivos.
-- **Decisão:** **Upload Direto para Object Storage (S3/MinIO) via URLs Pré-Assinadas**.
-- **Consequências Positivas:** O consumo de banda e processamento de arquivos pesados na API FastAPI é reduzido a zero, permitindo que o servidor processe apenas payloads leves de JSON.
-- **Consequências Negativas:** A API perde o controle síncrono sobre a finalização do upload, sendo necessário tratar o sucesso através de webhooks do storage ou notificações subsequentes do PWA.
+- **Contexto:** Técnicos podem anexar até 20 fotos de 5 MB por visita. Em 30.000 visitas/dia, a volumetria de mídia cresce rápido. A arquitetura precisa ser preparada para não estrangular a API com tráfego de binários.
+- **Opções Consideradas (arquitetura alvo):**
+  - **Upload tradicional via API:** O PWA envia o binário para FastAPI, que o envia para S3/MinIO. Gera forte acoplamento entre API e I/O de arquivos.
+  - **Upload direto via URLs pré-assinadas (presigned URLs):** A API emite um token/URL temporária e o cliente faz upload direto para object storage.
+- **Decisão (visão alvo):** **Upload direto para object storage (MinIO/S3) via URLs pré-assinadas**.  
+  Nessa visão, o backend lida apenas com JSON leve (metadados), e o armazenamento de mídia fica a cargo de um serviço especializado.
+
+- **Implementação atual na V1 (desafio prático):**
+  - Upload de fotos via endpoint FastAPI (recebendo `UploadFile`).
+  - Salvando o arquivo em **disco local** no container.
+  - Expondo as imagens via rota estática (`/static/...`).
+  - Armazenando apenas `file_url` no banco (`visit_attachments.file_url`).
+
+- **Motivo do recorte na V1:**
+  - Menos componentes para o avaliador subir via `docker-compose`.
+  - Debugging simples (é possível ver os arquivos no volume local).
+  - Mantém o contrato preparado para migração: o banco guarda apenas URLs, então trocar o backend de storage depois é transparente para o PWA.
+
+- **Consequências Positivas da visão alvo:** Reduz carga de I/O na API, melhora escalabilidade e permite usar features nativas de object storage (versionamento, lifecycle, etc.).
+- **Consequências Negativas da visão alvo:** Necessidade de coordenar upload assíncrono (eventos de sucesso/falha), aumento da complexidade de configuração (buckets, credenciais, permissões) e dependência de mais um componente na infraestrutura.
 
 ---
 
@@ -147,19 +176,51 @@ flowchart TD
 
 - **Contexto:** A instabilidade ou ausência completa de sinal de internet celular na rotina das equipes de campo exige que o PWA continue operando de forma transparente. O técnico deve conseguir registrar transições de estado (iniciar/concluir visita) e mídias sem conectividade.
 - **Opções Consideradas:**
-  1. _Sincronização de Estado com LocalStorage (Last-Write-Wins cego):_ Gravação do estado final do dado localmente. Descartado devido ao limite estrito de 5MB, falta de transações complexas e risco de sobrescrever atualizações legítimas da central.
-  2. _Fila de Comandos (Append-Only) baseada em IndexedDB:_ Registro sequencial das ações do técnico armazenadas localmente para reprocessamento posterior no servidor.
-- **Decisão:** **Fila de Comandos local armazenada no IndexedDB**.
-- **Consequências Positivas:** Armazenamento assíncrono robusto capaz de reter gigabytes de dados operacionais e arquivos (Blobs de imagens), além de preservar fielmente a cronologia dos eventos físicos ocorridos em campo.
-- **Consequências Negativas:** Aumenta a complexidade de desenvolvimento no front-end, que passa a gerenciar estados assíncronos locais e precisa tratar erros de concorrência de negócios (como o status HTTP `409 Conflict`).
+  - _Sincronização de Estado com LocalStorage (Last-Write-Wins cego):_ Gravação do estado final do dado localmente. Descartado devido ao limite estrito de 5MB, falta de transações complexas e risco de sobrescrever atualizações legítimas da central.
+  - _Fila de Comandos (Append-Only) baseada em IndexedDB:_ Registro sequencial das ações do técnico armazenadas localmente para reprocessamento posterior no servidor.
+- **Decisão (visão alvo):** **Fila de comandos local em IndexedDB (append-only)**:
+  - Cada ação gera um comando com `idempotency_key`.
+  - O Service Worker usa Background Sync para enviar lotes quando a conexão volta.
+  - O endpoint `/sync` processa os eventos em lote.
+
+- **Implementação atual na V1 (desafio prático):**
+  - A fila de eventos é armazenada em `localStorage`, indexada por email do técnico (`fieldops_queue_<email>`).
+  - Cada item da fila contém `visit_id`, `event_type`, `description`, `status_to_apply`, `idempotency_key`, etc.
+  - O PWA, ao detectar que está online, percorre essa fila e envia:
+    - Eventos de status para o endpoint `/sync`.
+    - Fotos para o endpoint de anexos da visita.
+  - Não há uso de IndexedDB nem Background Sync ainda; o foco foi garantir a lógica de fila, idempotência e tratamento de conflito com a API.
+
+- **Motivo do recorte na V1:**
+  - Implementar uma camada de IndexedDB bem feita e testada exigiria mais tempo do que o disponível.
+  - A prova valoriza mais a **estrutura do fluxo offline** (fila, idempotência, conflitos) do que a tecnologia exata de storage local.
+  - `localStorage` foi usado como compromisso pragmático para V1.
+
+- **Plano de evolução:**
+  - Substituir o backend da fila de eventos (hoje `localStorage`) por IndexedDB, mantendo o formato das mensagens e o uso de `idempotency_key`.
+
+- **Consequências Positivas:** Armazenamento assíncrono robusto capaz de reter gigabytes de dados operacionais e arquivos (Blobs de imagens), além de preservar fielmente a cronologia dos eventos físicos ocorridos em campo. A `idempotency_key` garante que, mesmo em reenvios parciais, o servidor nunca duplique um evento.
+- **Consequências Negativas:** Aumenta a complexidade de desenvolvimento no front-end, que passa a gerenciar estados assíncronos locais, tratar erros de concorrência de negócios (`HTTP 409 Conflict`) e manter a consistência entre o estado do IndexedDB e o estado visual exibido na interface.
 
 ---
-
 ### ADR 05: Escolha do Modelo de Banco de Dados (Relacional vs. Híbrido)
 
 - **Contexto:** O FieldOps lida com dados transacionais rígidos que exigem consistência absoluta (agendamentos de visitas, vínculos de técnicos e regras de faturamento/SLA). Paralelamente, o sistema precisa processar uma fila volumosa de tarefas em segundo plano (como logs de auditoria e simulação de notificações) sem travar as operações de leitura e escrita principais no banco de dados.
-- **Opções Consideradas:** 1. _Relacional Puro (PostgreSQL isolado):_ Centralização de todas as tabelas operacionais e filas de segundo plano no mesmo disco rígido. Descartado pelo risco de gargalo de I/O em disco devido à alta concorrência de escritas simultâneas de eventos. 2. _Híbrido (PostgreSQL + Redis Queue):_ Armazenamento relacional clássico em disco combinado com um banco de dados em memória RAM ultra-rápido focado em mensageria.
-- **Decisão:** **Modelo Híbrido com PostgreSQL 15 e Redis**. O PostgreSQL atua como a fonte única da verdade para dados estruturados, aproveitando campos `JSONB` para logs flexíveis de eventos. O Redis é adotado estritamente em memória para gerenciar a fila de mensageria assíncrona dos Workers locais de forma leve e com custo zero.
+- **Opções Consideradas:** 
+  - **Relacional Puro (PostgreSQL isolado):** Centralização de todas as tabelas operacionais e filas de segundo plano no mesmo disco rígido. Descartado pelo risco de gargalo de I/O em disco devido à alta concorrência de escritas simultâneas de eventos. 
+  - **Híbrido (PostgreSQL + Redis Queue):** Armazenamento relacional clássico em disco combinado com um banco de dados em memória RAM ultra-rápido focado em mensageria.
+- **Decisão (visão alvo):** **Modelo híbrido com PostgreSQL e Redis**:
+  - Postgres como fonte de verdade, com campos `JSONB` para flexibilidade.
+  - Redis como fila em memória para mensageria e background jobs.
+
+- **Implementação atual na V1:**
+  - Apenas PostgreSQL está em uso.
+  - Não há Redis nem workers de background.
+  - Webhooks e notificações são parte da visão de futuro, não do escopo atual.
+
+- **Justificativa:**  
+  Para o desafio, a prioridade é entregar o fluxo de visita ponta a ponta. Adicionar Redis e um worker completo aumentaria complexidade da infraestrutura local e o risco de falhas sem aumentar proporcionalmente o valor demonstrado.
+
 - **Consequências Positivas:** Isolamento total do consumo de recursos; queries operacionais na tabela de visitas permanecem rápidas porque a carga de processamento de tarefas em segundo plano roda isolada na memória RAM do Redis.
 - **Consequências Negativas:** Adiciona um componente a mais na arquitetura local, exigindo o gerenciamento de dois serviços de banco de dados separados dentro do ecossistema do Docker.
 
@@ -179,7 +240,7 @@ flowchart TD
 
 ## 3. Modelo de Dados
 
-Para visualização das relações lógicas, cardinalidades e o fluxo de chaves estrangeiras centrais do ecossistema Multi-Tenant, o esquema do banco foi mapeado utilizando a especificação DBML (Database Markup Language).
+Para visualização das entidades centrais e suas relações em um cenário multi-tenant, utilizo DBML (Database Markup Language).
 
 <!-- O modelo de dados representa um diagrama de ER, copie e cole todo o codigo no link: "https://dbdiagram.io/" -->
 
@@ -258,68 +319,125 @@ Ref: visit_attachments.company_id > companies.id [delete: cascade]
 Ref: visit_attachments.visit_id > visits.id [delete: cascade]
 ```
 
+Na V1, este modelo já está implementado com:
+
+- `companies` como tenant principal.
+- `users` com `company_id` e `role`.
+- `visits` com `company_id`, `technician_id`, `status`, `public_token`.
+- `visit_events` com `idempotency_key` e partição planejada por tempo.
+- `visit_attachments` com `file_url` apontando para o backend de storage atual (disco).
+
 ---
 
 ## 4. Mecanismo de Sincronização e Estratégia Offline do PWA
 
-O aplicativo móvel voltado para os técnicos de campo foi projetado sob o paradigma _Offline-First_. O funcionamento do sistema é agnóstico ao estado da rede física no momento da execução da tarefa, garantindo que o técnico jamais sofra travamentos de interface ou perda de registros operacionais devido à instabilidade de sinal.
+O aplicativo voltado para os técnicos de campo foi projetado sob o paradigma **Offline-First**, mas a implementação atual prioriza um fluxo consistente com o tempo de prova.  
+O objetivo é garantir que o técnico consiga operar mesmo com sinal instável, sem travamentos de interface ou perda de registros.
 
 ---
 
 ### 4.1 Armazenamento Local e Mecanismos Utilizados
 
-O PWA utiliza uma estratégia combinada de persistência no navegador, dividindo as responsabilidades em dois mecanismos nativos:
+**Visão alvo:**
 
-- **Cache API (Gerenciado pelo Service Worker):** Utilizado para armazenar os ativos estáticos da aplicação (arquivos HTML, JavaScript, CSS, fontes e ícones de interface). Adota-se a estratégia _Cache-First_: o aplicativo é carregado instantaneamente a partir do cache local, e o Service Worker busca atualizações em segundo plano. Isso garante que o app abra e renderize as telas mesmo sem internet.
-- **IndexedDB:** Banco de dados relacional local, assíncrono e transacional, utilizado para armazenar os dados de negócio. Diferente do LocalStorage (limitado a 5MB), o IndexedDB suporta gigabytes de dados, permitindo reter:
-  - A listagem das visitas agendadas para o dia do técnico (massa de dados JSON).
-  - A fila cronológica de comandos operacionais pendentes de envio.
-  - Arquivos binários temporários (imagens capturadas convertidas em objetos `Blob`) aguardando upload.
+- **Cache API + Service Worker:**  
+  Responsáveis por armazenar os ativos estáticos da aplicação (HTML, JS, CSS, fontes, ícones).  
+  Estratégia _Cache-First_: o app carrega a partir do cache local e o Service Worker busca atualizações em segundo plano, permitindo abertura do app mesmo sem internet.
+
+- **IndexedDB:**  
+  Banco local assíncrono usado para:
+  - Persistir a lista de visitas do dia do técnico.
+  - Armazenar a fila cronológica de comandos operacionais pendentes de envio.
+  - Guardar arquivos binários temporários (imagens em `Blob`) aguardando upload.
+
+**Implementação V1:**
+
+- O PWA já utiliza manifest/Service Worker para ser instalável e suportar cache básico de assets.
+- A fila de eventos do técnico é armazenada em `localStorage` (chave por email do usuário).
+- A lista de visitas é carregada via API e mantida em memória; em modo offline, os cards já carregados continuam visíveis enquanto o app permanece aberto.
 
 ---
 
-### 4.2 Gerenciamento da Fila de Operações Pendentes
+### 4.2 Fila de Operações Pendentes
 
-As ações do técnico em campo não realizam mutações destrutivas imediatas no estado da aplicação. O sistema implementa uma arquitetura baseada em **Fila de Comandos Append-Only**:
+Conceitualmente, o sistema segue uma arquitetura de **Fila de Comandos Append-Only**:
 
-1. **Enfileiramento FIFO:** Cada clique operacional (Iniciar Deslocamento, Registrar Foto, Concluir Serviço) gera um comando JSON estruturado contendo ID da visita, timestamp do evento físico e uma `idempotency_key` (UUIDv4) imutável. Este registro é inserido no IndexedDB em uma fila do tipo FIFO (_First-In, First-Out_).
-2. **Disparo Automático:** O Service Worker escuta eventos globais de conectividade (`online`) e utiliza a API de _Background Sync_. Ao detectar o retorno da internet, o Service Worker bloqueia a fila, consome os comandos em ordem cronológica exata e realiza o descarregamento em lote (_Batch Sync_) via requisição HTTP POST para o endpoint `/api/v1/sync` do backend.
+1. Cada ação operacional relevante (iniciar deslocamento, registrar foto, concluir serviço) gera um comando JSON contendo:
+   - `visit_id`,
+   - timestamp do evento físico,
+   - `event_type`,
+   - campos auxiliares (por exemplo `status_to_apply`),
+   - uma `idempotency_key` (UUIDv4) imutável.
+2. Esses comandos são enfileirados em uma estrutura FIFO (_First-In, First-Out_), para posterior reprocessamento no servidor em ordem cronológica.
+
+**Na prática (V1):**
+
+- Cada ação relevante gera uma entrada na fila em `localStorage`.
+- Quando a aplicação detecta que voltou a ficar online, percorre essa fila e:
+  - envia os eventos de status para o endpoint `/api/v1/sync`;
+  - envia anexos/fotos para o endpoint específico de anexos de visita.
+- A API `/sync` aplica os eventos utilizando a `idempotency_key` para evitar duplicações de processamento.
 
 ---
 
 ### 4.3 Resolução de Conflitos na Sincronização
 
-O FieldOps rejeita a abordagem cega de _Last-Write-Wins_. A inteligência de concorrência é centralizada no servidor através de uma Máquina de Estados explícita e bloqueio pessimista:
+O FieldOps evita a estratégia cega de _Last-Write-Wins_. A resolução de concorrência é centralizada no backend por meio de uma máquina de estados explícita e validações de negócio.
 
-1. **Bloqueio no Banco (`SELECT FOR UPDATE`):** Ao receber o lote, o backend abre uma transação e bloqueia a linha da visita no PostgreSQL.
-2. **Cenário de Conflito:** Se o técnico concluiu a visita offline, mas o operador administrativo a cancelou no painel web duas horas antes, o backend detecta que a transição de estado de `'CANCELADA'` para `'CONCLUIDA'` é ilegal.
-3. **Rejeição com HTTP 409:** A transação sofre _Rollback_. O servidor rejeita o comando do técnico e responde com o status `HTTP 409 Conflict`, devolvendo o payload com os dados reais e atuais da visita no banco de dados.
-4. **Tratamento do Conflito:** O PWA intercepta o erro 409, remove o comando da fila de transmissão principal (evitando o travamento do restante do lote) e move aquela visita específica para uma seção isolada de pendências da interface, preservando os dados digitados pelo técnico para fins de auditoria, sem corromper as regras financeiras do servidor.
+**No backend:**
+
+1. Ao receber um lote de eventos, a API valida o estado atual da visita no PostgreSQL antes de aplicar cada comando.
+2. Se a transição solicitada for ilegal (por exemplo, visita marcada como `'CANCELADA'` pelo admin e depois `'CONCLUIDA'` pelo técnico offline), o comando é rejeitado.
+3. Nesses casos, o servidor responde com `HTTP 409 Conflict`, retornando também o estado atual e válido da visita para o cliente.
+
+**No PWA:**
+
+- Em caso de `HTTP 409`, o evento correspondente:
+  - é marcado como conflito e não é reaplicado;
+  - não bloqueia o restante do lote de sync;
+  - faz com que a visita seja sinalizada na UI como pendente de intervenção, permitindo que o técnico veja a justificativa retornada pelo backend.
 
 ---
 
-### 4.4 Sinalização de Status para o Técnico (Feedback de UI)
+### 4.4 Feedback de UI para o Técnico
 
-A interface do PWA fornece dados visuais claros sobre o estado da sincronização dos dados para evitar ansiedade ou ações duplicadas do usuário:
+Na V1, a interface do PWA já oferece feedback visual suficiente para que o técnico entenda o estado de sincronização e evite ações duplicadas:
 
-- **Indicador Global de Conectividade:** Uma barra persistente no topo do aplicativo altera seu estado entre verde (`"Online"`) e cinza (`"Modo Offline"`) baseando-se nas escutas de rede do navegador.
-- **Badge de Fila Pendente:** O ícone de sincronização exibe um contador numérico em tempo real (Ex: `[ 3 ]`), indicando quantos comandos estão acumulados no IndexedDB aguardando envio.
-- **Estados Visuais por Card de Visita:** \* _Ícone de Relógio/Alerta:_ Indica que a transição de status ou a foto daquela visita específica ainda reside apenas no armazenamento local.
-  - _Ícone de Check Verde:_ Indica que o lote foi processado e confirmado pelo servidor com status `200 OK`.
-  - _Ícone de Alerta Vermelho (Conflito):_ Sinaliza que o comando foi rejeitado pelo servidor (Erro 409), convidando o técnico a abrir o card para visualizar a justificativa (Ex: "Esta visita foi cancelada pela central").
+- Indicação de modo offline/online (por meio de banners/indicadores visuais).
+- Sinalização de que existem operações pendentes de envio (badge/contador de fila).
+- Estados visuais diferenciados para:
+  - eventos em fila ainda não sincronizados;
+  - eventos sincronizados com sucesso;
+  - eventos em conflito (erros de negócio, como `HTTP 409`).
+
+**Evolução planejada da experiência:**
+
+- Barra persistente de conectividade no topo do aplicativo, com estados claros (por exemplo “Online” em verde, “Modo Offline” em cinza).
+- Badge numérico em tempo real associado à fila local, indicando quantos comandos aguardam envio.
+- Estados visuais por card de visita, diferenciando explicitamente:
+  - pendência local (evento ainda só no dispositivo),
+  - sincronização concluída,
+  - conflito rejeitado pelo backend (`HTTP 409`).
 
 ---
 
 ### 4.5 Limites do Modo Offline (O que NÃO funciona e por quê)
 
-Para manter o pragmatismo técnico e a viabilidade do MVP local, as seguintes funcionalidades são explicitamente bloqueadas no modo offline:
+Para manter o pragmatismo técnico e a viabilidade da V1 local, algumas funcionalidades são deliberadamente bloqueadas ou degradadas em modo offline:
 
-1. **Criação de Novas Visitas Ex-tempore:** O técnico não pode criar uma nova ordem de serviço do zero se estiver sem sinal.
-   - _Por quê:_ A geração de novas visitas exige a validação prévia de existência do cliente, disponibilidade de escopo e verificação de regras de negócio inter-inquilinos que residem estritamente no PostgreSQL.
-2. **Visualização de Mapas de Rota Dinâmicos:** O mapa de navegação e o cálculo de rotas otimizadas ficam indisponíveis.
-   - _Por quê:_ Dependem de requisições de I/O em tempo real para APIs externas de mapas (como Google Maps ou Mapbox). _Mitigação:_ O PWA exibe o endereço completo em formato de texto puro, extraído do cache do IndexedDB.
-3. **Upload Físico e Processamento Imediato de Fotos:** O arquivo binário da foto não é enviado para a nuvem.
-   - _Por quê:_ O envio para o Object Storage exige uma conexão ativa via HTTPS PUT. _Funcionamento local:_ O arquivo de imagem é convertido em um `Blob` (binário local), armazenado temporariamente no IndexedDB e seu upload real é postergado para quando o sinal retornar.
+1. **Criação de novas visitas ex-tempore:**  
+   O técnico não pode criar uma nova ordem de serviço do zero sem sinal.  
+   _Motivo:_ a criação exige validações de cliente, escopo e regras de negócio que dependem do PostgreSQL e de regras de multi-tenant no backend.
+
+2. **Visualização de mapas de rota dinâmicos:**  
+   Mapas e rotas otimizadas não são exibidos offline.  
+   _Motivo:_ dependem de chamadas em tempo real a APIs externas de mapas.  
+   _Mitigação:_ o PWA exibe o endereço textual completo (já carregado) para que o técnico possa usar outros meios de navegação.
+
+3. **Upload físico imediato de fotos para storage remoto:**  
+   Em modo offline, o upload efetivo para o backend/storage não ocorre.  
+   _Motivo:_ o envio para object storage exige conexão HTTPS ativa.  
+   _Funcionamento na V1:_ a foto é anexada logicamente à visita (evento e/ou payload local) e permanece associada à fila de sincronização; o envio real ocorre quando a conexão é restabelecida e o fluxo de sync é disparado novamente.
 
 ---
 
@@ -327,83 +445,263 @@ Para manter o pragmatismo técnico e a viabilidade do MVP local, as seguintes fu
 
 ### 5.1 Performance e Orçamentos de Web Vitals
 
-A experiência de uso do ecossistema é balizada por metas estritas de desempenho nas três principais métricas de Core Web Vitals do mercado:
+A experiência de uso do ecossistema é balizada pelas três principais métricas de Core Web Vitals, com metas definidas como **visão alvo**, mas já guiando decisões da V1.
 
-- **TTFB (Time to First Byte - Meta: < 200ms):** Controlado no backend através do modelo assínvrono do FastAPI e do driver `asyncpg`. A performance das rotas é mantida blindada através de índices compostos que incluem a chave discriminadora `company_id`, evitando leituras sequenciais em tabelas volumosas.
-- **LCP (Largest Contentful Paint - Meta: < 2.5s):** No painel Admin (Web), a velocidade de renderização do maior elemento visual é garantida via _Code Splitting_ e _Lazy Loading_ nativos do React (carregando telas e componentes sob demanda). No PWA do técnico, a estratégia _Cache-First_ do Service Worker serve a casca da aplicação instantaneamente a partir do disco local.
-- **INP (Interaction to Next Paint - Meta: < 200ms):** Mede a latência de resposta da tela após a interação do usuário. É mantido baixo no PWA delegando processamentos pesados (como a compressão e conversão de fotos em Blobs) para threads secundárias via _Web Workers_, mantendo a thread principal de renderização do React livre de travamentos.
+**Metas de referência (visão alvo):**
+
+- **TTFB (Time to First Byte) < 200 ms:**  
+  Alcançado combinando FastAPI assíncrono com driver `asyncpg` e índices compostos que incluem `company_id`, evitando varreduras completas em tabelas multi-tenant.
+- **LCP (Largest Contentful Paint) < 2,5 s:**  
+  - No Web Admin: uso de _code splitting_ e _lazy loading_ de telas em React, carregando apenas o necessário para o primeiro paint.  
+  - No PWA: shell da aplicação servido a partir da cache do Service Worker (_Cache-First_), permitindo que a UI principal apareça mesmo com rede lenta.
+- **INP (Interaction to Next Paint) < 200 ms:**  
+  Metas de interação fluida, especialmente em ações de status de visita e anexos de fotos, delegando futuras tarefas pesadas (como compressão de imagem) para Web Workers para não bloquear a thread principal.
+
+**V1 do desafio:**
+
+- Backend FastAPI com driver assíncrono para PostgreSQL e índices básicos focados em queries por `company_id` e `status`.
+- Frontends em React com divisão de bundles básica (importação dinâmica de páginas) para reduzir o peso inicial.
+- PWA com cache de assets via Service Worker, garantindo que, após o primeiro acesso, o carregamento subsequente seja sensivelmente mais rápido.
+
+Funcionalidades como compressão avançada de fotos no lado do cliente e uso de Web Workers dedicados para isso fazem parte da visão de produção e ainda não estão totalmente implementadas na V1; o design atual foi feito para permitir essa evolução sem quebra de contrato.
+
+---
 
 ### 5.2 Segurança, Transporte e Privacidade
 
-A proteção dos ativos de dados corporativos e individuais segue o princípio de defesa em camadas:
+A proteção de dados segue o princípio de **defesa em camadas**, com foco em:
 
-- **Autenticação, Autorização e Transporte:** Todo o tráfego público passa obrigatoriamente por criptografia em trânsito via protocolo **TLS (HTTPS)** gerenciado no API Gateway. O acesso a rotas protegidas exige a transmissão de tokens **JWT** via cabeçalhos HTTP. A validação de escopos (Roles) e do isolamento de inquilino (`company_id`) é interceptada por dependências nativas e obrigatórias na camada de roteamento da API.
-- **Armazenamento de Fotos com PII:** As imagens anexadas podem conter dados pessoais identificáveis (PII - _Personally Identifiable Information_), como rostos de clientes ou placas de veículos. Para garantir a privacidade, as fotos residem em **buckets estritamente privados** no Object Storage (MinIO/S3). O acesso direto via URL pública é bloqueado; a visualização ocorre exclusivamente através da geração de **URLs pré-assinadas temporárias** com tempo de expiração estrito de 15 minutos, emitidas pelo backend apenas para usuários autenticados e autorizados.
-- **Link Público do Cliente Final:** A rota de rastreamento do cliente final opera sem autenticação tradicional. A segurança é garantida pela alta entropia de um **token em formato UUIDv4** contido na URL (impossível de ser adivinhado ou varrido por força bruta). O endpoint correspondente atua sob o princípio da **minimização de dados**, limpando o payload e retornando apenas dados não sensíveis (status da visita e primeiro nome do técnico), omitindo CPFs, sobrenomes ou telefones.
+- **Transporte seguro:**  
+  Em produção, todo tráfego passa obrigatoriamente por **TLS (HTTPS)**, tipicamente terminação no gateway reverso. Na V1 local, isso é simulado no ambiente de desenvolvimento, mas o código já assume URLs HTTPS para ambientes reais.
+- **Autenticação e autorização:**  
+  - Rotas protegidas exigem tokens **JWT** enviados em cabeçalhos HTTP.  
+  - Cada token carrega `company_id` e `role` (admin/técnico), permitindo que o backend aplique RBAC e isolamento de tenant a partir do próprio token.
+- **Isolamento de tenant:**  
+  Dependências de rota no backend garantem que o `company_id` presente no JWT seja aplicado como filtro obrigatório nas consultas, evitando cross-tenant.
+- **Links públicos:**  
+  A página do cliente final utiliza um `public_token` em formato UUID, de alta entropia, como mecanismo principal de segurança. O endpoint público aplica o princípio de **minimização de dados**, retornando apenas informações estritamente necessárias (por exemplo, status da visita e identificação mínima do técnico).
+
+No contexto da V1 local, a ênfase está em:
+- Validar JWTs em todas as rotas sensíveis.
+- Garantir que os endpoints públicos jamais retornem dados que identifiquem plenamente o cliente (sem CPFs, telefones ou sobrenomes).
+
+---
 
 ### 5.3 Conformidade com a LGPD
 
-O tratamento de dados na plataforma atende integralmente aos requisitos da Lei Geral de Proteção de Dados:
+O desenho da plataforma foi feito para atender à **Lei Geral de Proteção de Dados** desde o início, mesmo que algumas rotas administrativas de gestão de dados ainda não estejam implementadas na V1.
 
-- **Bases Legais de Tratamento:** Os dados de identificação e contato do cliente final são tratados sob a base legal de **Execução de Contrato** (viabilização da prestação do serviço contratado). A coleta da geolocalização e histórico de eventos do técnico em campo apoia-se no **Legítimo Interesse** do controlador para fins de segurança operacional, comprovação técnica e cumprimento de acordos de nível de serviço (SLA).
-- **Políticas de Retenção e Minimização:** Os dados operacionais são mantidos apenas pelo período estritamente necessário para o cumprimento de obrigações legais e contratuais. Históricos detalhados de deslocamento e eventos locais de auditoria sofrem processos automáticos de **anonimização ou expurgo definitivo** após um ciclo de retenção parametrizado (Ex: 90 dias após o encerramento fiscal da ordem).
-- **Direitos do Titular (Exclusão e Portabilidade):** O sistema expõe rotas administrativas para atender a solicitações de titulares. Em caso de requisição de exclusão, os dados pessoais do cliente são mascarados no PostgreSQL (Ex: alterando para `"Cliente Anonimizado via LGPD"`), preservando a integridade financeira e estatística das visitas passadas sem armazenar dados que identifiquem o indivíduo. As fotos atreladas que contenham PII são deletadas fisicamente do Object Storage.
+**Pontos principais da visão alvo:**
+
+- **Bases legais de tratamento:**
+  - Dados de identificação/contato do cliente final: base de **execução de contrato** (viabilizar a prestação do serviço).
+  - Dados de geolocalização e histórico de eventos do técnico: **legítimo interesse** do controlador para segurança operacional, auditoria e cumprimento de SLA.
+- **Retenção e minimização:**
+  - Dados operacionais são mantidos apenas pelo tempo necessário para obrigações legais e contratuais.
+  - Históricos detalhados (por exemplo, timeline de eventos) sofrem processos automáticos de anonimização ou expurgo após um período configurável (ex.: 90 dias após o fechamento fiscal da ordem).
+- **Direitos do titular:**
+  - Em caso de solicitação de exclusão, o sistema substitui dados pessoais (nome, identificadores) por marcadores neutros (por exemplo `"Cliente Anonimizado via LGPD"`), preservando consistência financeira e estatística.
+  - Fotos com PII são removidas fisicamente do storage ao atender pedidos de exclusão.
+
+**Estado da V1:**
+
+- O modelo de dados já separa claramente:
+  - Dados operacionais (visitas, eventos, anexos).
+  - Dados pessoais (nome do cliente, etc.).
+- As rotas específicas para anonimização em lote e portabilidade ainda não foram implementadas, mas o schema foi pensado para suportar essas operações sem alterações estruturais significativas.
+
+---
 
 ### 5.4 Estratégia de Observabilidade e Triagem de Falhas
 
-O monitoramento do ecossistema é estruturado sobre os três pilares da observabilidade distribuída:
+**Visão alvo de observabilidade distribuída:**
 
-- **Logs Estruturados:** A API FastAPI e os Workers geram logs estritamente em formato **JSON** contendo metadados unificados (`tenant_id`, `user_id`, `request_id`, `timestamp`). As mensagens são centralizadas em ferramentas de agregação (como Grafana Loki ou ELK Stack), eliminando o uso de prints e logs de texto livre.
-- **Métricas Operacionais:** Coleta contínua de telemetria de infraestrutura (uso de CPU e memória RAM dos containers do Docker) e de aplicação (tempo médio de resposta das rotas, contagem de erros HTTP 5XX e tamanho da fila de mensageria no Redis), expostas nativamente para raspagem do **Prometheus** e exibidas em painéis do **Grafana**.
-- **Traces Distribuídos:** Implementados via **OpenTelemetry** e correlacionados através de um cabeçalho único (`X-Request-ID`). Permitem rastrear uma requisição de sincronização desde o momento em que bate no API Gateway, passa pelos middlewares do FastAPI, executa instruções no PostgreSQL e enfileira uma tarefa no Redis.
-- **Alertas e Triagem de Incidentes:** Alertas são disparados para canais de engenharia caso a taxa de erros HTTP 5XX ultrapasse 1% ou o tempo de resposta da API exceda o orçamento de performance. Em caso de falha sistêmica, o protocolo de triagem consiste em verificar primeiro o **Painel de Tráfego do Gateway** (para isolar problemas de rede), seguido pelas **Métricas de Conexão do Banco de Dados**, isolando o erro definitivo através do rastreamento do `request_id` nos **Logs Estruturados** do serviço afetado.
+- **Logs estruturados:**  
+  Toda API e worker emite logs em formato JSON, com campos padrão (`tenant_id`, `user_id`, `request_id`, `timestamp`). Esses logs são enviados para uma stack de agregação (Grafana Loki, ELK, etc.).
+- **Métricas:**  
+  Coleta de métricas de infraestrutura (CPU, RAM, conexões de banco) e de aplicação (latência por rota, taxa de erros 4xx/5xx, tamanho da fila de mensagens).
+- **Traces distribuídos:**  
+  Implementados com OpenTelemetry, utilizando um identificador único (`X-Request-ID`) para traçar a jornada de uma requisição desde o gateway até o banco e os workers.
+- **Alertas:**  
+  Regras de alerta (por exemplo, erro 5xx > 1% ou p95 de latência acima da meta) enviam notificações para canais de engenharia e disparam protocolos de triagem.
+
+**V1 do desafio:**
+
+- Logs ainda são basicamente texto/stdout e inspecionados manualmente, de forma suficiente para o ambiente local da prova.
+- Não há stack completa de métricas/traces configurada; em vez disso, o foco foi garantir:
+  - mensagens de erro claras no backend,
+  - comportamento previsível em caso de falhas de sync,
+  - e logs suficientes para depuração local.
+
+O documento registra a direção de evolução, mas não finge que essa stack está pronta na V1.
+
+---
 
 ### 5.5 Governança e Controle de Custos de Infraestrutura
 
-Para viabilizar a estabilidade financeira durante o crescimento projetado de 10x na volumetria, os principais gargalos de custo foram mitigados na raiz da arquitetura:
+A arquitetura alvo foi desenhada com preocupações explícitas de custo, principalmente em mídia e banco de dados.
 
-- **Gargalo de Armazenamento e Banda de Rede (Mídias):** O upload de 20 fotos de 5MB por visita em uma escala de 30k visitas/dia geraria custos abusivos de tráfego de dados. _Mecanismo de Controle:_ O PWA realiza a **compressão e redimensionamento físico da imagem no lado do cliente** utilizando APIs de Canvas do navegador antes de disparar o upload. A resolução é reduzida e o arquivo é compactado de 5MB para um teto máximo de 500KB (uma redução de 90% no custo de armazenamento no S3/MinIO e em transferência de dados de rede), preservando a legibilidade para comprovação técnica.
-- **Gargalo de Processamento de Banco de Dados (PostgreSQL):** A varredura de índices em tabelas de auditoria (Timeline de Eventos) contendo dezenas de milhões de linhas causaria exaustão de CPU e exigiria atualizações caras de hardware (escala vertical). _Mecanismo de Controle:_ A adoção do **particionamento por faixa de tempo (mensal)** isola as escritas e leituras na partição corrente. Aliado ao cache de leituras pesadas e repetitivas (como configurações de inquilinos e listagem de usuários ativos) gerenciado na memória RAM do **Redis**, o banco de dados relacional principal permanece leve, portável e estável com baixo consumo computacional.
+**Visão alvo:**
+
+- **Mídias (fotos):**
+  - Compressão e redimensionamento de imagens no cliente (via canvas/Web Workers) para reduzir arquivos de ~5 MB para ~500 KB.
+  - Upload direto para object storage (MinIO/S3) com políticas de lifecycle para expurgo automático de objetos antigos.
+- **Banco de dados (PostgreSQL):**
+  - Particionamento por tempo (por exemplo, mensal) em `visit_events` para limitar tamanho de índice ativo.
+  - Cache de leituras repetidas (por exemplo, configurações de tenants, lista de usuários ativos) via Redis, reduzindo carga em queries pesadas.
+
+**V1 do desafio:**
+
+- Upload de fotos ainda é tratado via API + disco local, sem compressão agressiva.
+- Não há particionamento implementado nem Redis em uso; a estrutura das tabelas e a presença de `visit_events` como tabela separada já preparam o terreno para essa evolução.
+- O foco principal foi:
+  - manter a solução simples de rodar em ambiente local,
+  - mas com um modelo de dados e contratos de API alinhados com uma futura operação mais barata e escalável.
 
 ---
 
 ## 6. Roadmap de Implementação e Evolução do Produto
 
-O plano de entrega da plataforma FieldOps adota uma abordagem incremental, focando primeiro na validação do fluxo crítico de valor do negócio para, em seguida, expandir a robustez, os recursos offline avançados e a otimização para a escala de 10x.
-
-### 6.1 Fase 1: MVP (Mínimo Produto Viável) - Validação do Core Transacional
-
-O objetivo desta fase é validar a comunicação de ponta a ponta entre a central e o campo em cenários com conectividade estável, garantindo a governança básica.
-
-- **Escopo do Backend:** API em FastAPI com tabelas centrais (`companies`, `users`, `visits`), autenticação simples via JWT e injeção do isolamento por linha via `company_id`.
-- **Escopo do PWA (Técnico):** Interface básica carregando a listagem de visitas do dia e permitindo transições de status simples (Iniciar/Concluir), operando de forma estritamente online.
-- **Escopo do Web Admin:** Painel simplificado para o operador cadastrar empresas, usuários e agendar ordens de serviço.
-- **Exclusões Técnicas:** Modo offline do PWA, uploads de fotos pesadas, links públicos para o cliente final e o sistema de filas por Redis Queue (as tarefas rodam de forma síncrona).
-
-### 6.2 Fase 2: V1 (Pronto para o Mundo Real) - Robustez e Resiliência Offline
-
-Esta fase adapta o sistema para as condições hostis de campo, cobrindo 90% das dores operacionais e requisitos de auditoria exigidos.
-
-- **Escopo do PWA (Técnico):** Implementação completa do Service Worker (Cache API para carregar o app offline) e da Fila FIFO de Comandos no IndexedDB. Captura de fotos convertidas em Blobs locais.
-- **Escopo do Backend:** Ativação do endpoint de sincronização em lote (`/sync`), validação atômica via Máquina de Estados com bloqueio pessimista (`SELECT FOR UPDATE`) e tratamento de erros HTTP 409. Emissão de URLs pré-assinadas para upload direto no MinIO/S3.
-- **Escopo de Segurança e Cliente:** Geração do link público criptografado via UUIDv4 para o cliente final acompanhar o status da visita com minimização de dados (LGPD).
-- **Exclusões Técnicas:** Integrações automatizadas com ERPs externos via webhooks e ferramentas complexas de observabilidade distribuída.
-
-### 6.3 Fase 3: V2 (Escala e Ecossistema) - Alta Disponibilidade e Integrações B2B
-
-Foco total na eficiência de custos para suportar o crescimento de 10x (300k visitas/dia) e na abertura da plataforma para ecossistemas de grandes clientes.
-
-- **Otimização de Infraestrutura:** Ativação do particionamento mensal por faixa de tempo na tabela `visit_events` do PostgreSQL. Implementação de cache de leitura no Redis para dados estáticos de tenants e usuários.
-- **Mensageria e Background Jobs:** Ativação do Redis Queue e dos Background Workers assíncronos para isolar os disparos de webhooks e simulação de notificações fora do fluxo principal da API.
-- **Ecossistema de APIs:** Abertura de endpoints públicos para que os ERPs das empresas clientes possam agendar visitas ou receber webhooks automáticos de conclusão de serviços.
+O roadmap da FieldOps é organizado em três fases entregáveis (MVP, V1 e V2), cada uma com escopo claro do que entra, o que fica de fora e o motivo. Ao final, há um marco específico para a primeira semana em produção real com um cliente piloto.
 
 ---
 
-### 6.4 Marco Crucial: Checklist da "Primeira Semana em Produção Real" (Cliente Piloto)
+### 6.1 Fase 1: MVP – Core Transacional Online
 
-Para colocar o primeiro cliente em produção (composto por 1 empresa e 5 técnicos monitorados) logo na primeira segunda-feira, o escopo técnico do MVP (Fase 1) precisa estar acompanhado de salvaguardas mínimas de infraestrutura e operação:
+**Objetivo:** validar o fluxo de valor mais crítico (admin agenda → técnico executa → admin acompanha) em um cenário de conectividade estável, com o mínimo de peças possível.
 
-1. **Infraestrutura Mínima de Produção (Nuvem):** O backend FastAPI e o banco de dados PostgreSQL devem estar rodando em ambiente de nuvem real, protegidos obrigatoriamente por HTTPS (TLS), garantindo a criptografia dos dados em trânsito.
-2. **Ambientes e Configurações via Environment Variables:** Separação estrita de credenciais. O sistema deve ler chaves, senhas de banco e URLs de serviços através de variáveis de ambiente (`.env`), sem dados sensíveis expostos no código.
-3. **Esteira de CI/CD Mínima:** Automação via GitHub Actions para rodar testes unitários básicos e realizar o deploy automático no servidor de produção assim que o código sofrer correções na branch principal.
-4. **Plano de Contingência Operacional (Suporte Técnico):** Criação de um canal direto de comunicação (Ex: grupo de suporte) com os 5 técnicos do piloto e monitoramento manual de logs no servidor pelo desenvolvedor durante as primeiras 8 horas de operação em campo. Caso o aplicativo sofra um bug crítico de travamento, um formulário ou planilha manual de contingência deve estar impresso com os técnicos para que o trabalho na rua não pare enquanto o patch de correção é aplicado via CI/CD.
+**O que entra:**
+
+- **Backend (FastAPI + PostgreSQL):**
+  - Tabelas centrais: `companies`, `users`, `visits`.
+  - Autenticação via JWT com `company_id` e `role`.
+  - Isolamento de tenant por `company_id` aplicado nas rotas administrativas.
+- **Web Admin (React):**
+  - Login administrativo.
+  - Cadastro de empresas e usuários.
+  - Agendamento de visitas (CRUD básico de `visits`).
+- **PWA do Técnico (React):**
+  - Login do técnico.
+  - Listagem de visitas do dia, carregadas via API.
+  - Transições de status simples (ex.: AGENDADA → EM_ATENDIMENTO → CONCLUIDA) **apenas online**.
+
+**Fica fora dessa fase:**
+
+- **Modo offline e fila de comandos:**  
+  Ficam de fora nesta fase para reduzir risco inicial e provar primeiro o fluxo online ponta a ponta.
+- **Upload de fotos:**  
+  Também adiado; o foco é validar a mecânica de visitas sem peso de mídia.
+- **Página pública do cliente:**  
+  Ainda não é necessária para validar o core transacional.
+- **Redis, workers, integrações com ERP/WhatsApp:**  
+  Não entram no MVP para evitar complexidade extra de infraestrutura.
+
+**Porquê:**  
+Nesta fase, a prioridade é ter algo simples que já demonstre valor de negócio e permita testar o modelo de dados, autenticação e fluxo admin ↔ técnico sem distrações.
+
+---
+
+### 6.2 Fase 2: V1 – Offline Básico, Fotos e Página Pública
+
+**Objetivo:** tornar o sistema utilizável nas condições reais de campo (sinal instável) e já entregar visibilidade para o cliente final, mantendo a solução ainda simples de operar.
+
+**O que entra:**
+
+- **PWA (Técnico):**
+  - Manifest + Service Worker para tornar o app instalável e habilitar cache de assets.
+  - Fila de eventos **implementada em `localStorage`** (visão alvo: IndexedDB), armazenando comandos de status e anexos de forma append-only.
+  - Suporte a iniciar/concluir visitas mesmo offline; eventos são enfileirados e enviados quando a conexão volta.
+  - Upload de fotos via API, com gravação em disco local no backend e associação à visita.
+
+- **Backend:**
+  - Endpoint `/api/v1/sync` para receber lote de eventos com `idempotency_key`.
+  - Lógica de negócios com validação de estado e resposta `HTTP 409` em caso de conflito (por exemplo, visita cancelada no admin e concluída offline pelo técnico).
+  - Endpoints para anexos de visita que recebem arquivos e armazenam referências em `visit_attachments`.
+
+- **Página pública do cliente:**
+  - Rota `/v/<public_token>` que:
+    - valida o `public_token`;
+    - retorna dados minimizados da visita (status, janela de horário, identificação reduzida do técnico);
+    - exibe essa informação em uma página React desacoplada.
+
+**Fica fora dessa fase:**
+
+- **IndexedDB + Background Sync:**  
+  Ficam para depois por demandarem mais infraestrutura de front-end; a prova é atendida com `localStorage` e sync manual/disparado pela aplicação.
+- **Upload direto para MinIO/S3 com presigned URLs:**  
+  A V1 usa disco local para simplificar o ambiente de avaliação; a troca de backend de storage é um passo posterior.
+- **Integrações automatizadas com ERPs via webhooks:**  
+  Adiar integrações externas evita dispersão; o foco aqui é consolidar o fluxo FieldOps em si.
+- **Stack completa de observabilidade (Loki, Prometheus, OpenTelemetry):**  
+  Permanece como visão alvo para produção, não necessária para a prova local.
+
+**Porquê:**  
+Esta fase “fecha o ciclo” em condições próximas da realidade de campo: técnico consegue trabalhar offline, fotos entram no fluxo e o cliente consegue acompanhar o status via link público, sem ainda introduzir todos os componentes de escala.
+
+---
+
+### 6.3 Fase 3: V2 – Escala, Mensageria e Ecossistema B2B
+
+**Objetivo:** preparar a plataforma para crescer 10x em volumetria (ex.: 300k visitas/dia) e se integrar com ecossistemas de grandes clientes (ERPs, gateways de notificação, etc.).
+
+**O que entra:**
+
+- **Infraestrutura e banco de dados:**
+  - Particionamento por faixa de tempo (por exemplo, mensal) na tabela `visit_events` para manter índices e queries sob controle mesmo com milhões de eventos.
+  - Uso de Redis como:
+    - cache de leituras repetitivas (ex.: configurações de tenant, lista de usuários),
+    - fila de mensagens para background jobs.
+
+- **Mensageria e background jobs:**
+  - Redis Queue + workers em Python para:
+    - disparo de webhooks para o ERP do cliente,
+    - envio de notificações via gateways (WhatsApp/SMS),
+    - processamento de tarefas pesadas fora da requisição principal (por exemplo, pós-processamento de anexos).
+
+- **Object storage e upload direto:**
+  - Substituição do upload via API + disco local por upload direto para MinIO/S3 via presigned URLs.
+  - Políticas de lifecycle no storage para controlar custo de mídia.
+
+- **Observabilidade e confiabilidade:**
+  - Logs estruturados em JSON com `tenant_id`, `user_id` e `request_id`.
+  - Métricas expostas para Prometheus (latência, erros, filas, recursos).
+  - Traces distribuídos com OpenTelemetry, cobrindo path gateway → API → banco → worker.
+
+**Fica fora dessa fase:**
+
+- Qualquer refactor radical de domínio ou modelo de dados:  
+  A V2 é uma evolução da V1, não uma reescrita. As mudanças são focadas em infraestrutura e integração, preservando a API pública.
+
+**Porquê:**  
+Nesta fase, FieldOps deixa de ser apenas um sistema “localmente robusto” e passa a se posicionar como plataforma pronta para produção real em escala, com integrações B2B e controles de custo mais finos.
+
+---
+
+### 6.4 Marco: Primeira Semana em Produção Real (Cliente Piloto)
+
+**Cenário:** 1 empresa piloto, ~5 técnicos de campo, início de uso em regime real numa segunda-feira.
+
+Para suportar essa primeira semana com segurança, é necessário que, no mínimo, o escopo da **Fase 2 (V1)** esteja pronto, acompanhado de alguns cuidados operacionais:
+
+- **Infraestrutura mínima em nuvem:**
+  - Backend FastAPI e PostgreSQL rodando em ambiente de nuvem real (ex.: VPS ou serviço gerenciado).
+  - HTTPS configurado (certificado válido) para todos os endpoints externos.
+
+- **Configuração e segurança:**
+  - Todas as credenciais (banco, JWT secret, chaves de storage, etc.) fornecidas via variáveis de ambiente (`.env`), sem hardcode no código.
+  - Usuários/admins do piloto cadastrados e validados antecipadamente.
+
+- **CI/CD mínimo:**
+  - Pipeline automatizado (por exemplo, GitHub Actions) executando:
+    - testes básicos de backend,
+    - build dos frontends,
+    - deploy automatizado para o ambiente de produção ao integrar em branch principal.
+
+- **Monitoramento e suporte na primeira semana:**
+  - Canal direto de comunicação com o time piloto (grupo de suporte).
+  - Acompanhamento manual dos logs e métricas durante as primeiras horas de uso real.
+  - Plano de contingência:  
+    - caso o PWA apresente um bug crítico que impeça o uso, os técnicos têm à disposição formulário ou planilha simples para registrar as visitas enquanto um patch é desenvolvido e publicado via CI/CD.
+
+**Ideia central:**  
+O sistema em produção para o primeiro cliente piloto precisa ser simples, previsível e observável o suficiente para que qualquer incidente seja rapidamente detectado e mitigado, sem interromper o trabalho em campo.
