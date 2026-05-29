@@ -13,7 +13,7 @@ export default function VisitDetail() {
   const [error, setError] = useState("");
   
   const [notes, setNotes] = useState("");
-  const [photo, setPhoto] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
@@ -31,22 +31,23 @@ export default function VisitDetail() {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => setPhoto(reader.result);
+      reader.onloadend = () => setPhotoPreview(reader.result);
       reader.readAsDataURL(file);
     }
   };
 
   const handleStateTransition = async (eventType, statusToApply, defaultDescription) => {
     setActionLoading(true);
+    // Usa as anotações do textarea caso seja a conclusão, ou a descrição padrão das etapas
     const finalDescription = statusToApply === "COMPLETED" ? notes || defaultDescription : defaultDescription;
 
     const actionPayload = {
       visit_id: id,
       event_type: eventType,
       description: finalDescription,
-      photo: statusToApply === "COMPLETED" ? photo : null, 
+      photo: null, // Deixamos nulo conforme alinhado para evitar conflito de persistência
       idempotency_key: `idemp-tech-${crypto.randomUUID()}`,
-      created_at: new Date().toISOString().replace("Z", ""), 
+      created_at: new Date().toISOString().replace("Z", ""), // Sincronia de fuso com o Postgres
       status_to_apply: statusToApply
     };
 
@@ -54,21 +55,11 @@ export default function VisitDetail() {
 
     if (navigator.onLine) {
       try {
-        // Envia o evento de transição estruturado para o backend
         await api.request("/sync/", {
           method: "POST",
           body: JSON.stringify({ events: [actionPayload] })
         });
         
-        // 💾 BACKUP SEGURO DE MÍDIA NO LOCALSTORAGE:
-        // Como o teu endpoint de sync do backend ignora a foto no commit, nós gravamos 
-        // a imagem Base64 localmente associada à O.S. no navegador. 
-        // Quando o Admin abrir esta mesma O.S. na mesma máquina, ele lerá instantaneamente!
-        if (statusToApply === "COMPLETED" && photo) {
-          localStorage.setItem(`fieldops_photo_fallback_${id}`, photo);
-          localStorage.setItem(`fieldops_notes_fallback_${id}`, finalDescription);
-        }
-
         setVisit(prev => ({ ...prev, status: statusToApply }));
         alert("Status atualizado e sincronizado com o servidor com sucesso!");
       } catch (err) {
@@ -77,18 +68,13 @@ export default function VisitDetail() {
         setActionLoading(false);
       }
     } else {
-      // Cenário Offline Legítimo
+      // Modo Offline Legítimo
       const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
       currentQueue.push(actionPayload);
       localStorage.setItem(queueKey, JSON.stringify(currentQueue));
       
-      if (statusToApply === "COMPLETED" && photo) {
-        localStorage.setItem(`fieldops_photo_fallback_${id}`, photo);
-        localStorage.setItem(`fieldops_notes_fallback_${id}`, finalDescription);
-      }
-
       setVisit(prev => ({ ...prev, status: statusToApply }));
-      alert("Sem sinal. Alteração salva localmente para sincronização automática posterior.");
+      alert("Sem sinal. Relatório de texto salvo localmente para sincronização automática.");
       setActionLoading(false);
     }
   };
@@ -96,6 +82,7 @@ export default function VisitDetail() {
   if (loading) return <p className="p-6 text-xs text-slate-400 font-bold text-center">Buscando detalhes...</p>;
   if (error || !visit) return <p className="p-6 text-xs text-rose-600 font-bold text-center">{error}</p>;
 
+  // NORMALIZAÇÃO DE ENUMS DE STATUS
   let rawStatus = (visit.status || "").toUpperCase();
   let textFriendly = visit.status;
 
@@ -154,16 +141,16 @@ export default function VisitDetail() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">Anexar Foto Comprovante</label>
+              <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">Anexar Foto Comprovante (Demonstrativo)</label>
               <input
                 type="file"
                 accept="image/*"
                 onChange={handlePhotoChange}
                 className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
               />
-              {photo && (
+              {photoPreview && (
                 <div className="mt-3 relative rounded-xl overflow-hidden border border-slate-200 h-24 bg-slate-100 flex items-center justify-center">
-                  <img src={photo} alt="Preview" className="h-full object-cover" />
+                  <img src={photoPreview} alt="Preview visual" className="h-full object-cover" />
                 </div>
               )}
             </div>
@@ -194,7 +181,7 @@ export default function VisitDetail() {
           {rawStatus === "IN_PROGRESS" && (
             <button 
               disabled={actionLoading}
-              onClick={() => handleStateTransition("CONCLUIR_VISITA", "COMPLETED", "Visita técnica concluída.")}
+              onClick={() => handleStateTransition("CONCLUIR_VISITA", "COMPLETED", notes || "Visita técnica concluída.")}
               className="w-full h-12 bg-emerald-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
               {actionLoading ? "Processando..." : "✅ Concluir Ordem de Serviço"}

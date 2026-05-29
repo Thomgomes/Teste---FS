@@ -26,7 +26,7 @@ export default function VisitDetail() {
       const updatedVisit = await api.request(`/visits/${id}/cancel`, {
         method: "PATCH",
       });
-      setVisit(updatedVisit); 
+      setVisit(updatedVisit); // Atualiza a tela com o novo status e o novo evento na timeline na hora!
     } catch (err) {
       alert(err.message || "Falha ao cancelar o chamado.");
     } finally {
@@ -54,6 +54,8 @@ export default function VisitDetail() {
       isMounted = false;
     };
   }, [id]);
+
+console.log(visit)
 
   if (loading) {
     return (
@@ -100,34 +102,6 @@ export default function VisitDetail() {
         </div>
       </div>
     );
-  }
-
-  // 🛡️ ENGENHARIA DE CONTINGÊNCIA DA COMPROVAÇÃO DE CAMPO:
-  // Se o banco de dados ignorar o Base64, recuperamos o rascunho de tela local do Pedro
-  const localFallbackPhoto = localStorage.getItem(`fieldops_photo_fallback_${id}`);
-  const localFallbackNotes = localStorage.getItem(`fieldops_notes_fallback_${id}`);
-
-  let activeAttachments = [...visit.attachments];
-  if (activeAttachments.length === 0 && localFallbackPhoto) {
-    activeAttachments.push({
-      id: "fallback-photo-id",
-      file_url: localFallbackPhoto,
-      uploaded_at: visit.updated_at,
-      isBase64: true
-    });
-  }
-
-  // Garante que se a O.S. foi concluída pelo técnico, o comentário apareça na timeline de auditoria
-  let activeEvents = [...visit.events];
-  const hasCompletionEvent = activeEvents.some(e => e.event_type === "CONCLUIR_VISITA" || e.event_type === "COMPLETED");
-  
-  if (visit.status === "COMPLETED" && !hasCompletionEvent && localFallbackNotes) {
-    activeEvents.push({
-      id: "fallback-evt-id",
-      event_type: "CONCLUIR_VISITA",
-      description: localFallbackNotes,
-      created_at: visit.updated_at
-    });
   }
 
   return (
@@ -217,19 +191,20 @@ export default function VisitDetail() {
               📸 Evidências Fotográficas do Atendimento
             </h3>
 
-            {activeAttachments.length === 0 ? (
+            {visit.attachments.length === 0 ? (
               <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400 text-xs font-medium">
-                Nenhuma foto de comprovação técnica foi anexada a este chamado até o momento.
+                Nenhuma foto de comprovação técnica foi anexada a este chamado
+                até o momento.
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {activeAttachments.map((img) => (
+                {visit.attachments.map((img) => (
                   <div
                     key={img.id}
                     className="group relative aspect-square bg-slate-100 border border-slate-200 rounded-xl overflow-hidden shadow-xs hover:border-indigo-500 transition-colors"
                   >
                     <img
-                      src={img.isBase64 ? img.file_url : `http://localhost:8000${img.file_url}`}
+                      src={`http://localhost:8000${img.file_url}`}
                       alt="Anexo técnico"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                     />
@@ -250,17 +225,20 @@ export default function VisitDetail() {
           </h3>
 
           <div className="relative border-l border-slate-200 ml-2 pl-4 space-y-6">
-            {activeEvents.map((event) => (
+            {visit.events.map((event) => (
               <div key={event.id} className="relative group">
+                {/* Indicador visual de nó da linha */}
                 <div className="absolute -left-5.25 top-0.5 bg-indigo-600 h-2.5 w-2.5 rounded-full border border-white ring-4 ring-indigo-50" />
 
                 <div>
                   <span className="block text-[10px] font-bold text-indigo-600 uppercase tracking-wider">
                     {event.event_type}
                   </span>
+                  {/* ✨ CORREÇÃO DA LINHA DE AUDITORIA: Exibe a observação real coletada em campo */}
                   <p className="text-xs text-slate-700 font-semibold mt-0.5">
                     {event.description}
                   </p>
+                  {console.log(event)}
                   <span className="block text-[9px] text-slate-400 mt-1">
                     {new Date(event.created_at).toLocaleString("pt-BR")}
                   </span>
