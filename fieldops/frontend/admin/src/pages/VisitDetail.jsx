@@ -13,6 +13,8 @@ export default function VisitDetail() {
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
+  
+
   const handleCancelVisit = async () => {
     if (
       !window.confirm(
@@ -55,8 +57,8 @@ export default function VisitDetail() {
     };
   }, [id]);
 
-console.log(visit)
 
+  console.log(visit) 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-slate-400 gap-3">
@@ -182,6 +184,20 @@ console.log(visit)
                   ⏱️ {new Date(visit.updated_at).toLocaleString("pt-BR")}
                 </p>
               </div>
+              
+              {/* ✨ NOVO CAMPO: Link do cliente perfeitamente encaixado na Grid */}
+              <div className="sm:col-span-2 pt-2 border-t border-slate-50">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Link do cliente
+                </label>
+                <input 
+                  type="text" 
+                  readOnly 
+                  value={`http://localhost:3000/v/${visit.public_token}`} 
+                  className="w-full mt-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-mono text-slate-500 focus:outline-none select-all cursor-pointer"
+                  onClick={(e) => e.target.select()}
+                />
+              </div>
             </div>
           </div>
 
@@ -225,22 +241,20 @@ console.log(visit)
           </h3>
 
           <div className="relative border-l border-slate-200 ml-2 pl-4 space-y-6">
-            {visit.events.map((event) => (
+            {(visit.events || []).map((event) => (
               <div key={event.id} className="relative group">
                 {/* Indicador visual de nó da linha */}
                 <div className="absolute -left-5.25 top-0.5 bg-indigo-600 h-2.5 w-2.5 rounded-full border border-white ring-4 ring-indigo-50" />
 
                 <div>
                   <span className="block text-[10px] font-bold text-indigo-600 uppercase tracking-wider">
-                    {event.event_type}
+                    {event.event_type || event.eventType}
                   </span>
-                  {/* ✨ CORREÇÃO DA LINHA DE AUDITORIA: Exibe a observação real coletada em campo */}
                   <p className="text-xs text-slate-700 font-semibold mt-0.5">
                     {event.description}
                   </p>
-                  {console.log(event)}
                   <span className="block text-[9px] text-slate-400 mt-1">
-                    {new Date(event.created_at).toLocaleString("pt-BR")}
+                    {new Date(event.created_at || event.createdAt).toLocaleString("pt-BR")}
                   </span>
                 </div>
               </div>
