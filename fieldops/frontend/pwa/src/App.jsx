@@ -1,9 +1,43 @@
-function App() {
-  return (
-    <>
-      <h1 className="bg-red-500 w-20 h-20">PWA</h1>
-    </>
-  )
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import Login from "./pages/Login";
+import VisitsList from "./pages/VisitsList";
+import VisitDetail from "./pages/VisitDetail";
+
+// Componente Guardião: Bloqueia técnicos não autenticados
+function GuardedRoute({ children }) {
+  const token = localStorage.getItem("tech_token");
+  return token ? children : <Navigate to="/" replace />;
 }
 
-export default App
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Rota Pública: Tela de Acesso Mobile */}
+        <Route path="/" element={<Login />} />
+
+        {/* Rotas Protegidas do Técnico de Campo */}
+        <Route 
+          path="/visitas" 
+          element={
+            <GuardedRoute>
+              <VisitsList />
+            </GuardedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/visitas/:id" 
+          element={
+            <GuardedRoute>
+              <VisitDetail />
+            </GuardedRoute>
+          } 
+        />
+
+        {/* Fallback de Segurança */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
