@@ -49,3 +49,23 @@ class VisitResponse(BaseModel):
     technician: Optional[UserResponseMini] = None
 
     model_config = ConfigDict(from_attributes=True)
+    
+class PublicTechnicianResponse(BaseModel):
+    nome: str
+
+class PublicTimelineEvent(BaseModel):
+    momento: datetime
+    situacao: str
+    detalhes: Optional[str] = None
+
+class PublicVisitTrackResponse(BaseModel):
+    visita_id: uuid.UUID
+    cliente: str
+    status_atual: str
+    janela_agendada: datetime
+    ultima_atualizacao: datetime
+    tecnico_designado: PublicTechnicianResponse
+    linha_do_tempo: List[PublicTimelineEvent]
+
+    class Config:
+        from_attributes = True

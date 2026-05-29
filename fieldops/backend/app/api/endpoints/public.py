@@ -8,10 +8,11 @@ from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import get_db
 from app.db import models
+from app.schemas.visit import PublicVisitTrackResponse
 
 router = APIRouter()
 
-@router.get("/v/{token}")
+@router.get("/v/{token}", response_model=PublicVisitTrackResponse)
 async def get_public_visit_status(
     token: uuid.UUID,
     db: AsyncSession = Depends(get_db)

@@ -1,15 +1,16 @@
-#Endpoint para sincronização de dados do PWA offline
+# Endpoint para sincronização de dados do PWA offline
 
 import uuid
 import logging
-from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
+from typing import List
 
 from app.api.dependencies import get_db, require_technician
 from app.db import models
-from app.schemas.sync import SyncPayloadSchema
+from app.schemas.sync import SyncPayloadSchema, SyncBatchResponseSchema, SyncActionResponse, SyncSummarySchema
 
 router = APIRouter()
 logger = logging.getLogger("fieldops.sync")
@@ -23,7 +24,6 @@ async def simulate_external_integrations_async(visit_id: uuid.UUID, event_type: 
     - Envio de Webhook HTTP para o ERP do cliente
     - Disparo de notificação via Gateway de WhatsApp/SMS
     """
-    # Usamos o logger estruturado para provar a execução em segundo plano sem travar a requisição
     logger.info(
         f"⚡ [ASYNC MOCK INTEGRATION] Evento '{event_type}' processado para a Visita {visit_id} "
         f"| Tenant: {company_id} | Notificando ERP e disparando WhatsApp via console..."
@@ -32,7 +32,7 @@ async def simulate_external_integrations_async(visit_id: uuid.UUID, event_type: 
 # =========================================================================
 # 🔄 ENDPOINT CORE: SINCRONIZAÇÃO EM LOTE IDEMPOTENTE E ASSÍNCRONA
 # =========================================================================
-@router.post("/", status_code=status.HTTP_200_OK)
+@router.post("/", response_model=SyncBatchResponseSchema, status_code=status.HTTP_200_OK)
 async def sync_offline_events(
     payload: SyncPayloadSchema,
     db: AsyncSession = Depends(get_db),
@@ -40,7 +40,7 @@ async def sync_offline_events(
 ):
     """
     Processa em lote e de forma assíncrona a fila FIFO descarregada pelo PWA do técnico.
-    Aplica deduplicação por chave de idempotência e resolve conflitos de estado com o Admin (Erro 409).
+    Aplica deduplicação por chave de idempotência e resolve conflitos de estado com o Admin.
     """
     sync_results = []
     processed_events_count = 0
@@ -55,11 +55,11 @@ async def sync_offline_events(
         idempotency_result = await db.execute(idempotency_query)
         if idempotency_result.scalar_one_or_none() is not None:
             ignored_by_idempotency += 1
-            sync_results.append({
-                "idempotency_key": event_data.idempotency_key,
-                "status": "IGNORADO",
-                "detail": "Evento já processado pelo servidor em tentativa anterior."
-            })
+            sync_results.append(SyncActionResponse(
+                idempotency_key=event_data.idempotency_key,
+                status="IGNORADO",
+                detail="Evento já processado pelo servidor em tentativa anterior."
+            ))
             continue
 
         # 🔏 2. TRAVA DE TENANT E LEITURA DA VISITA
@@ -73,17 +73,16 @@ async def sync_offline_events(
         visit = visit_result.scalar_one_or_none()
 
         if not visit:
-            sync_results.append({
-                "idempotency_key": event_data.idempotency_key,
-                "status": "ERRO",
-                "detail": "Visita não encontrada ou violação de acesso inter-inquilino."
-            })
+            sync_results.append(SyncActionResponse(
+                idempotency_key=event_data.idempotency_key,
+                status="ERRO",
+                detail="Visita não encontrada ou violação de acesso inter-inquilino."
+            ))
             continue
 
-        # ⚖️ 3. MÁQUINA DE ESTADOS: RESOLUÇÃO DO CONFLITO CRÍTICO DA PROVA (Erro 409)
+        # ⚖️ 3. MÁQUINA DE ESTADOS: RESOLUÇÃO DO CONFLITO CRÍTICO DA PROVA
         # Se a visita já foi cancelada ou concluída online na central, o estado do banco é soberano
         if visit.status in [models.VisitStatus.CANCELED, models.VisitStatus.COMPLETED]:
-            # Gravamos o evento de conflito na timeline assíncronamente para rastro de auditoria (LGPD)
             conflict_event = models.VisitEvent(
                 company_id=current_user.company_id,
                 visit_id=visit.id,
@@ -97,11 +96,11 @@ async def sync_offline_events(
             )
             db.add(conflict_event)
             
-            sync_results.append({
-                "idempotency_key": event_data.idempotency_key,
-                "status": "CONFLITO",
-                "detail": f"Alteração recusada. Visita já encerrada como {visit.status.value} pelo painel Admin."
-            })
+            sync_results.append(SyncActionResponse(
+                idempotency_key=event_data.idempotency_key,
+                status="CONFLITO",
+                detail=f"Alteração recusada. Visita já encerrada como {visit.status.value} pelo painel Admin."
+            ))
             processed_events_count += 1
             continue
 
@@ -117,7 +116,7 @@ async def sync_offline_events(
             company_id=current_user.company_id,
             visit_id=visit.id,
             event_type=event_data.event_type,
-            description=event_data.description,
+            description=event_data.description or f"Status atualizado para {visit.status.value}",
             idempotency_key=event_data.idempotency_key,
             created_at=event_data.created_at
         )
@@ -128,21 +127,22 @@ async def sync_offline_events(
         # Dispara os mocks de forma assíncrona na mesma thread sem bloquear o laço
         await simulate_external_integrations_async(visit.id, event_data.event_type, current_user.company_id)
         
-        sync_results.append({
-            "idempotency_key": event_data.idempotency_key,
-            "status": "SUCESSO",
-            "detail": f"Transição para {visit.status.value} efetuada com sucesso."
-        })
+        sync_results.append(SyncActionResponse(
+            idempotency_key=event_data.idempotency_key,
+            status="SUCESSO",
+            detail=f"Transição para {visit.status.value} efetuada com sucesso."
+        ))
 
     # 💾 5. COMMIT ATÔMICO E ASSÍNCRONO DO LOTE
     if processed_events_count > 0:
         await db.commit()
 
-    return {
-        "mensagem": "Sincronização em lote processada.",
-        "resumo": {
-            "sucesso_ou_conflito": processed_events_count,
-            "ignorados_por_idempotencia": ignored_by_idempotency
-        },
-        "detalhes": sync_results
-    }
+    # Retorna o envelope de objeto exatamente como o contrato de testes exige
+    return SyncBatchResponseSchema(
+        mensagem="Sincronização em lote processada.",
+        resumo=SyncSummarySchema(
+            sucesso_ou_conflito=processed_events_count,
+            ignorados_por_idempotencia=ignored_by_idempotency
+        ),
+        detalhes=sync_results
+    )
