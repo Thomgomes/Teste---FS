@@ -72,7 +72,8 @@ async def create_visit(
         .where(models.Visit.id == new_visit.id)
         .options(
             selectinload(models.Visit.events),
-            selectinload(models.Visit.attachments)
+            selectinload(models.Visit.attachments),
+            selectinload(models.Visit.technician)
         )
     )
     refresh_result = await db.execute(refresh_query)

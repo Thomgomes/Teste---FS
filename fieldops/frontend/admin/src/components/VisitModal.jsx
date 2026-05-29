@@ -22,25 +22,28 @@ export default function VisitModal({ isOpen, onClose, technicians, onSaveSuccess
     setError("");
 
     try {
+      // 🛡️ O endpoint /visits/ espera um JSON em formato snake_case estrito
       await api.request("/visits/", {
         method: "POST",
         body: JSON.stringify({
           client_name: clientName,
           address: address,
           technician_id: technicianId,
-          scheduled_at: new Date(scheduledAt).toISOString(),
+          // 📅 Passa a string direta do input. O FastAPI digere o formato "YYYY-MM-DDTHH:MM" nativamente
+          scheduled_at: scheduledAt, 
         }),
       });
 
-      // Limpa os estados do formulário
+      // Limpa os estados do formulário após gravação com sucesso absoluto
       setClientName("");
       setAddress("");
       setTechnicianId("");
       setScheduledAt("");
       
-      onSaveSuccess(); // Recarrega a grade do Dashboard automaticamente
-      onClose(); // Fecha o modal
+      onSaveSuccess(); 
+      onClose(); 
     } catch (err) {
+      // 🇧🇷 Captura o detail tratado que alteramos no api.js ou joga o erro da validação
       setError(err.message || "Falha ao registrar nova ordem de serviço.");
     } finally {
       setLoading(false);
@@ -61,7 +64,7 @@ export default function VisitModal({ isOpen, onClose, technicians, onSaveSuccess
           </button>
         </div>
 
-        {/* ERRO */}
+        {/* ALERTA DE ERRO */}
         {error && (
           <div className="mx-6 mt-4 bg-rose-50 border border-rose-100 text-rose-700 text-xs p-3 rounded-xl font-semibold">
             {error}
