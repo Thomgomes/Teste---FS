@@ -15,40 +15,24 @@ from app.schemas.sync import SyncPayloadSchema, SyncBatchResponseSchema, SyncAct
 router = APIRouter()
 logger = logging.getLogger("fieldops.sync")
 
-# =========================================================================
-# 📢 MOCKS ASSÍNCRONOS DE INTEGRAÇÃO (REQUISITO RECALIBRADO V1)
-# =========================================================================
 async def simulate_external_integrations_async(visit_id: uuid.UUID, event_type: str, company_id: uuid.UUID):
-    """
-    Simula de forma assíncrona e não-bloqueante as integrações descritas no cenário:
-    - Envio de Webhook HTTP para o ERP do cliente
-    - Disparo de notificação via Gateway de WhatsApp/SMS
-    """
     logger.info(
         f"⚡ [ASYNC MOCK INTEGRATION] Evento '{event_type}' processado para a Visita {visit_id} "
         f"| Tenant: {company_id} | Notificando ERP e disparando WhatsApp via console..."
     )
 
-# =========================================================================
-# 🔄 ENDPOINT CORE: SINCRONIZAÇÃO EM LOTE IDEMPOTENTE E ASSÍNCRONA
-# =========================================================================
 @router.post("/", response_model=SyncBatchResponseSchema, status_code=status.HTTP_200_OK)
 async def sync_offline_events(
     payload: SyncPayloadSchema,
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(require_technician)
 ):
-    """
-    Processa em lote e de forma assíncrona a fila FIFO descarregada pelo PWA do técnico.
-    Aplica deduplicação por chave de idempotência e resolve conflitos de estado com o Admin.
-    """
     sync_results = []
     processed_events_count = 0
     ignored_by_idempotency = 0
 
     for event_data in payload.events:
         
-        # 🛡️ 1. DEDUPLICAÇÃO ASSÍNCRONA (Chave de Idempotência)
         idempotency_query = select(models.VisitEvent).where(
             models.VisitEvent.idempotency_key == event_data.idempotency_key
         )
@@ -62,7 +46,6 @@ async def sync_offline_events(
             ))
             continue
 
-        # 🔏 2. TRAVA DE TENANT E LEITURA DA VISITA
         visit_query = select(models.Visit).where(
             and_(
                 models.Visit.id == event_data.visit_id,
@@ -80,8 +63,6 @@ async def sync_offline_events(
             ))
             continue
 
-        # ⚖️ 3. MÁQUINA DE ESTADOS: RESOLUÇÃO DO CONFLITO CRÍTICO DA PROVA
-        # Se a visita já foi cancelada ou concluída online na central, o estado do banco é soberano
         if visit.status in [models.VisitStatus.CANCELED, models.VisitStatus.COMPLETED]:
             conflict_event = models.VisitEvent(
                 company_id=current_user.company_id,
@@ -104,7 +85,6 @@ async def sync_offline_events(
             processed_events_count += 1
             continue
 
-        # 🔄 4. ATUALIZAÇÃO LEGÍTIMA DE ESTADO (Fluxo Feliz Async)
         if event_data.event_type == "INICIAR_DESLOCAMENTO":
             visit.status = models.VisitStatus.IN_DISPLACEMENT
         elif event_data.event_type == "INICIAR_ATENDIMENTO":
@@ -124,7 +104,6 @@ async def sync_offline_events(
         db.add(approved_event)
         processed_events_count += 1
         
-        # Dispara os mocks de forma assíncrona na mesma thread sem bloquear o laço
         await simulate_external_integrations_async(visit.id, event_data.event_type, current_user.company_id)
         
         sync_results.append(SyncActionResponse(
@@ -133,11 +112,9 @@ async def sync_offline_events(
             detail=f"Transição para {visit.status.value} efetuada com sucesso."
         ))
 
-    # 💾 5. COMMIT ATÔMICO E ASSÍNCRONO DO LOTE
     if processed_events_count > 0:
         await db.commit()
 
-    # Retorna o envelope de objeto exatamente como o contrato de testes exige
     return SyncBatchResponseSchema(
         mensagem="Sincronização em lote processada.",
         resumo=SyncSummarySchema(

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends  # 🌟 Adicione o ", Depends" aqui!
+from fastapi import FastAPI, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,16 +40,13 @@ app.include_router(public.router, prefix=f"{settings.API_V1_STR}/public", tags=[
 
 app.mount("/static/uploaded_images", StaticFiles(directory="/app/uploaded_images", check_dir=False), name="uploaded_images")
 
-# 🚀 Evento que roda assim que o FastAPI inicializa
 @app.on_event("startup")
 async def startup_event():
     print("====== INICIALIZANDO BANCO DE DADOS ======")
     async with engine.begin() as conn:
-        # Esse comando cria FISICAMENTE todas as tabelas no Postgres se elas não existirem
         await conn.run_sync(Base.metadata.create_all)
     print("====== TABELAS CRIADAS COM SUCESSO ======")
     
-    # Executa os seeds abrindo uma sessão rápida isolada para o boot
     async with AsyncSessionLocal() as session:
         await run_seeds(session)
 

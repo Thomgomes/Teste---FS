@@ -14,14 +14,10 @@ from app.schemas.visit import VisitCreate, VisitResponse
 
 router = APIRouter()
 
-# Pasta local dentro do container onde as fotos da V1 serão salvas fisicamente
 UPLOAD_DIR = "/app/uploaded_images"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-# =========================================================================
-# 📝 1. ENDPOINT: CRIAR UMA NOVA VISITA (EXCLUSIVO ADMIN - ASYNC)
-# =========================================================================
 @router.post("/", response_model=VisitResponse, status_code=status.HTTP_201_CREATED)
 async def create_visit(
     payload: VisitCreate,
@@ -66,7 +62,6 @@ async def create_visit(
     db.add_all([new_visit, initial_event])
     await db.commit()
     
-    # Em vez do refresh cego, fazemos uma query explícita trazendo as tabelas filhas de forma segura
     refresh_query = (
         select(models.Visit)
         .where(models.Visit.id == new_visit.id)
@@ -77,16 +72,13 @@ async def create_visit(
         )
     )
     refresh_result = await db.execute(refresh_query)
-    visit_pronta = refresh_result.scalar_one()
+    visit_complete = refresh_result.scalar_one()
     
-    return visit_pronta
+    return visit_complete
 
 # arrumar o nome escrito nessa coisa aq em cima
 
 
-# =========================================================================
-# 📋 2. ENDPOINT: LISTAR VISITAS COM FILTROS (ADMIN OU TÉCNICO - ASYNC)
-# =========================================================================
 @router.get("/", response_model=List[VisitResponse])
 async def list_visits(
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -112,18 +104,14 @@ async def list_visits(
     if date_filter:
         try:
             from datetime import datetime, time
-            # O input type="date" do HTML devolve no formato "YYYY-MM-DD"
             parsed_date = datetime.strptime(date_filter, "%Y-%m-%d").date()
             
-            # Define o início (00:00:00) e o fim (23:59:59) daquele dia para a busca na tabela
             start_datetime = datetime.combine(parsed_date, time.min)
             end_datetime = datetime.combine(parsed_date, time.max)
             
             filters.append(models.Visit.scheduled_at.between(start_datetime, end_datetime))
         except ValueError:
-            # Caso venha uma string de data corrompida, ignora silenciosamente para não quebrar o app
             pass
-    # selectinload garante o carregamento assíncrono das tabelas filhas (evita erro de LazyLoading)
     query = (
         select(models.Visit)
         .where(and_(*filters))
@@ -133,9 +121,6 @@ async def list_visits(
     result = await db.execute(query)
     return result.scalars().all()
 
-# =========================================================================
-# 👥 2.1 ENDPOINT: LISTAR TÉCNICOS PARA O COMBO DO FILTRO (COLE AQUI)
-# =========================================================================
 @router.get("/technicians-list", response_model=List[dict])
 async def list_company_technicians(
     db: AsyncSession = Depends(get_db),
@@ -152,9 +137,6 @@ async def list_company_technicians(
     return [{"id": str(row.id), "name": row.name} for row in rows]
 
 
-# =========================================================================
-# 📸 3. ENDPOINT: ANEXAR FOTO À VISITA (EXCLUSIVO TÉCNICO - ASYNC DE DISCO)
-# =========================================================================
 @router.post("/{visit_id}/attachments", status_code=status.HTTP_201_CREATED)
 async def upload_visit_photo(
     visit_id: uuid.UUID,
@@ -162,11 +144,6 @@ async def upload_visit_photo(
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(require_any_role)
 ):
-    """
-    Recebe o binário da foto enviado pelo técnico, salva em disco de forma não-bloqueante
-    e vincula o caminho à tabela visit_attachments respeitando o Tenant.
-    """
-    # 1. Verifica se a visita existe e pertence ao tenant logado
     query = select(models.Visit).where(
         and_(models.Visit.id == visit_id, models.Visit.company_id == current_user.company_id)
     )
@@ -179,14 +156,12 @@ async def upload_visit_photo(
             detail="Visita não encontrada ou acesso negado."
         )
 
-    # 2. Gera um nome único para o arquivo para evitar colisões em disco
     file_extension = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     file_path = os.path.join(UPLOAD_DIR, unique_filename)
 
-    # 3. Leitura e escrita assíncronas do binário do arquivo
     try:
-        contents = await file.read() # Consome o stream de dados de forma async
+        contents = await file.read()
         with open(file_path, "wb") as f:
             f.write(contents)
     except Exception:
@@ -195,14 +170,12 @@ async def upload_visit_photo(
             detail="Falha ao persistir o arquivo de imagem no servidor local."
         )
 
-    # 4. Grava a referência na tabela de anexos do Postgres de forma assíncrona
     new_attachment = models.VisitAttachment(
         company_id=current_user.company_id,
         visit_id=visit.id,
-        file_url=f"/static/uploaded_images/{unique_filename}" # URL simulada que o front vai ler
+        file_url=f"/static/uploaded_images/{unique_filename}" 
     )
     
-    # Gera um log de evento na timeline notificando o anexo
     attachment_event = models.VisitEvent(
         company_id=current_user.company_id,
         visit_id=visit.id,
@@ -219,9 +192,6 @@ async def upload_visit_photo(
         "file_url": new_attachment.file_url
     }
     
-# =========================================================================
-# 🔍 4. ENDPOINT: BUSCAR UMA VISITA ESPECÍFICA POR ID (ADMIN OU TÉCNICO)
-# =========================================================================
 @router.get("/{visit_id}", response_model=VisitResponse)
 async def get_visit_by_id(
     visit_id: uuid.UUID,
@@ -253,19 +223,12 @@ async def get_visit_by_id(
         
     return visit
 
-# =========================================================================
-# 🚫 ENDPOINT: CANCELAR UMA VISITA (EXCLUSIVO ADMIN - ASYNC)
-# =========================================================================
 @router.patch("/{visit_id}/cancel", response_model=VisitResponse)
 async def cancel_visit(
     visit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(require_admin)
 ):
-    """
-    Permite à central cancelar uma visita online. Isso força o estado terminal
-    que travará as sincronizações offline em conflito vindas do PWA.
-    """
     query = (
         select(models.Visit)
         .where(and_(models.Visit.id == visit_id, models.Visit.company_id == current_user.company_id))
@@ -277,13 +240,11 @@ async def cancel_visit(
     if not visit:
         raise HTTPException(status_code=404, detail="Visita não localizada.")
 
-    # 🛡️ Regra de negócio: Se já foi concluída, não pode mais cancelar
     if visit.status == models.VisitStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Impossível cancelar uma ordem de serviço já concluída.")
 
     visit.status = models.VisitStatus.CANCELED
     
-    # Injeta o evento de cancelamento na timeline de auditoria
     cancel_event = models.VisitEvent(
         company_id=current_user.company_id,
         visit_id=visit.id,

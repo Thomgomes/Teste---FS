@@ -8,11 +8,7 @@ from app.core import security
 from app.db import models
 
 async def run_seeds(db: AsyncSession) -> None:
-    """
-    Executa a carga inicial de dados exigida pelo escopo da prova.
-    Garante o provisionamento automático de 1 Empresa, 2 Usuários e 10 Visitas.
-    """
-    # 1. Checa se o banco já possui dados para evitar duplicidade no reload
+
     query_check = select(models.Company)
     result_check = await db.execute(query_check)
     if result_check.scalars().first() is not None:
@@ -21,15 +17,13 @@ async def run_seeds(db: AsyncSession) -> None:
 
     print("🌱 [SEEDS] Banco vazio detectado. Injetando massa de teste obrigatória...")
 
-    # 2. Criar 1 Empresa Piloto
     company = models.Company(
         name="Empresa Mult fictícia",
         cnpj="12345678000199"
     )
     db.add(company)
-    await db.flush()  # Gera o UUID da empresa na memória
+    await db.flush() 
 
-    # 3. Criar 2 Usuários (1 Admin e 1 Técnico)
     admin_user = models.User(
         company_id=company.id,
         name="Gabriel Umberto",
@@ -54,7 +48,6 @@ async def run_seeds(db: AsyncSession) -> None:
     db.add_all([admin_user, tech_user, tech_user2])
     await db.flush()
 
-    # 4. Criar 10 Visitas distribuídas nos estados do seu Enum
     status_list = [
         (models.VisitStatus.SCHEDULED, "Instalação de Roteador Comercial", "Clínica Sorriso - Av. Paulista, 1000"),
         (models.VisitStatus.SCHEDULED, "Manutenção Preventiva de Ar Condicionado", "Banco Central - Rua da Aurora, 450"),
@@ -69,13 +62,11 @@ async def run_seeds(db: AsyncSession) -> None:
     ]
 
     for i, (status_type, client, addr) in enumerate(status_list):
-        # 🧠 ESTRATÉGIA: Os índices de 0 a 5 (6 visitas) ficam com o Carlos.
-        # Os índices 6, 7, 8 e 9 (4 visitas) ficam como None (Não designado)
         tech_id = tech_user.id if i < 6 else tech_user2.id
 
         visit = models.Visit(
             company_id=company.id,
-            technician_id=tech_id, # <--- Vincula dinamicamente aqui
+            technician_id=tech_id,
             client_name=client,
             address=addr,
             status=status_type,

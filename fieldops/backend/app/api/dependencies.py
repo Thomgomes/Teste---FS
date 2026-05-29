@@ -13,18 +13,10 @@ from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import User, UserRole
 
-# Configura o FastAPI para extrair o Token do cabeçalho "Authorization: Bearer <TOKEN>"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
-
-# =========================================================================
-# 🛢️ 1. GERENCIADOR SÉNIOR DE SESSÃO DO BANCO DE DADOS
-# =========================================================================
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Cria uma sessão assíncrona com o Postgres para cada requisição HTTP
-    e garante o fechamento automático da conexão ao final do ciclo.
-    """
+
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -32,17 +24,11 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-# =========================================================================
-# 🔒 2. PROTETOR DE ROTAS: VALIDADOR DE TOKEN E RECUPERADOR DE USUÁRIO
-# =========================================================================
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme)
 ) -> User:
-    """
-    Guarda de trânsito da API. Descriptografa o JWT, valida a assinatura,
-    verifica a expiração e busca o usuário dono do token no banco de dados.
-    """
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token inválido, expirado ou ausente. Autenticação necessária.",
@@ -50,20 +36,17 @@ async def get_current_user(
     )
     
     try:
-        # Descriptografa o token usando nossa chave secreta única do Docker
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.ALGORITHM])
         user_id_str: str = payload.get("sub")
         
         if user_id_str is None:
             raise credentials_exception
             
-        # Converte a string de volta para o objeto UUID do Python
         user_id = uuid.UUID(user_id_str)
         
     except (JWTError, ValidationError, ValueError):
         raise credentials_exception
     
-    # Executa a query assíncrona no Postgres para achar o usuário
     query = select(User).where(User.id == user_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()

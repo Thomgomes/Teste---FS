@@ -17,10 +17,9 @@ class SyncPayloadSchema(BaseModel):
     
 class SyncActionResponse(BaseModel):
     idempotency_key: str
-    status: str            # O teste espera "SUCESSO", "CONFLITO", "IGNORADO" ou "ERRO"
+    status: str            
     detail: str
 
-# 📊 Schema adicionado para casar com a estrutura exigida pelo contrato dos testes
 class SyncSummarySchema(BaseModel):
     sucesso_ou_conflito: int
     ignorados_por_idempotencia: int
