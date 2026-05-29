@@ -4,7 +4,6 @@ import Dashboard from "./pages/Dashboard";
 import VisitDetail from "./pages/VisitDetail";
 import ClientPage from "./pages/ClientPage";
 
-// Componente de Guarda de Rota para proteger o Painel Admin
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem("fieldops_token");
   const user = localStorage.getItem("fieldops_user");
@@ -29,7 +28,9 @@ export default function App() {
         {/* Rota Pública: Entrada */}
         <Route path="/" element={<Login />} />
 
+        {/* Rotas Do Cliente */}
         <Route path="/v/:token" element={<ClientPage />} />
+        
         {/* Rotas Privadas e Protegidas para o Administrador */}
         <Route
           path="/dashboard"

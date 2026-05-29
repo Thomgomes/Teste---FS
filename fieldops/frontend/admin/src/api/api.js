@@ -51,7 +51,6 @@ export const api = {
   },
 
   async login(email, password) {
-    // O OAuth2PasswordRequestForm do FastAPI espera form-data ou URL encoded
     const formData = new URLSearchParams();
     formData.append("username", email);
     formData.append("password", password);

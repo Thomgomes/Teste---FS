@@ -1,37 +1,32 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable no-unused-vars */
 
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/api";
 import { useVisitFilters } from "../hooks/useVisitsFilters";
 import VisitRow from "../components/VisitRow";
-import VisitModal from "../components/VisitModal"; // ➕ Importação do Modal
+import VisitModal from "../components/VisitModal"; 
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const storedUser = JSON.parse(localStorage.getItem("fieldops_user") || "{}");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [refreshSignal, setRefreshSignal] = useState(0); // ⏱️ Sinalizador interno para recarregar a grade
+  const [refreshSignal, setRefreshSignal] = useState(0); 
 
-  // 🪝 Toda a inteligência da URL unificada aqui
   const { filters, setFilter, queryString } = useVisitFilters();
 
-  // Estados de dados da API
   const [visits, setVisits] = useState([]);
   const [technicians, setTechnicians] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Coleta a lista de técnicos uma única vez para o combobox
   useEffect(() => {
     api.request('/visits/technicians-list')
       .then(setTechnicians)
       .catch(err => console.error(err));
   }, []);
 
-  // Carrega as visitas aplicando os filtros reativos e escutando o sinal de atualização do modal
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
@@ -49,7 +44,7 @@ export default function Dashboard() {
       });
 
     return () => { isMounted = false; };
-  }, [queryString, refreshSignal]); // 🔄 Re-executa se a URL mudar OU se uma nova visita for criada
+  }, [queryString, refreshSignal]); 
 
   const handleLogout = () => {
     localStorage.clear();
@@ -57,12 +52,12 @@ export default function Dashboard() {
   };
 
   const handleSaveSuccess = () => {
-    setRefreshSignal(prev => prev + 1); // Dispara o efeito de recarga da tabela
+    setRefreshSignal(prev => prev + 1);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* 🔝 HEADER */}
+      {/* HEADER */}
       <header className="bg-white border-b border-slate-200 min-h-16 flex flex-col sm:flex-row items-center justify-between px-6 py-3 sm:py-0 gap-3 shadow-xs">
         <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
           <span className="text-xl font-black text-indigo-600 tracking-tight">
@@ -85,9 +80,8 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* 🎛️ PAINEL PRINCIPAL */}
+      {/*  PAINEL PRINCIPAL */}
       <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-6">
-        {/* TÍTULO E AÇÃO CRIAÇÃO */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-xl font-black text-slate-900 tracking-tight md:text-2xl">
@@ -99,13 +93,13 @@ export default function Dashboard() {
           </div>
           <button
             className="h-11 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl px-5 transition-colors shadow-md shadow-indigo-100 cursor-pointer flex items-center justify-center gap-2 w-full sm:w-auto"
-            onClick={() => setIsModalOpen(true)} // 🔄 CORRIGIDO: Agora ativa o Modal perfeitamente
+            onClick={() => setIsModalOpen(true)}
           >
-            <span>➕ Nova Visita</span>
+            <span>Nova Visita</span>
           </button>
         </div>
 
-        {/* 🔍 BARRA DE FILTROS REATIVOS */}
+        {/* BARRA DE FILTROS */}
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
@@ -156,7 +150,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* 📊 CONTEÚDO / LISTAGEM */}
+        {/* CONTEÚDO / LISTAGEM */}
         {error ? (
           <div className="bg-rose-50 border border-rose-100 text-rose-700 text-sm p-4 rounded-xl font-medium text-center">
             {error}
@@ -207,7 +201,6 @@ export default function Dashboard() {
         )}
       </main>
 
-      {/* ➕ Injeção do Modal de Criação */}
       <VisitModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}

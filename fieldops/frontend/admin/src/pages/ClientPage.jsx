@@ -42,7 +42,6 @@ export default function ClientPage() {
     );
   }
 
-  // Usa os campos do PublicVisitTrackResponse (schema público em português)
   const statusRaw = (visit.status_atual || "").toUpperCase();
 
   const statusMapping = {
@@ -88,19 +87,16 @@ export default function ClientPage() {
         <div className="space-y-4 text-xs font-semibold text-slate-300">
           <div className="bg-slate-950/40 p-3 border border-slate-800/60 rounded-xl">
             <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-0.5">Profissional Alocado</p>
-            {/* ✅ campo correto: tecnico_designado.nome */}
             <p className="text-white font-bold">{visit.tecnico_designado?.nome || "Buscando profissional..."}</p>
           </div>
 
           <div className="bg-slate-950/40 p-3 border border-slate-800/60 rounded-xl">
             <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-0.5">Janela de Atendimento Prevista</p>
-            {/* ✅ campo correto: janela_agendada */}
             <p className="text-white font-bold">{new Date(visit.janela_agendada).toLocaleString("pt-BR")}</p>
           </div>
 
           <div className="bg-slate-950/40 p-3 border border-slate-800/60 rounded-xl">
             <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider mb-0.5">Cliente</p>
-            {/* ✅ campo correto: cliente */}
             <p className="text-white font-bold">{visit.cliente}</p>
           </div>
         </div>
@@ -115,7 +111,6 @@ export default function ClientPage() {
             <p className="text-[11px] font-medium text-slate-500 text-center py-2">Nenhum evento registrado ainda.</p>
           ) : (
             <div className="relative border-l border-slate-800 ml-2 pl-4 space-y-4">
-              {/* ✅ campo correto: linha_do_tempo, com momento e detalhes */}
               {visit.linha_do_tempo.map((evt, idx) => (
                 <div key={idx} className="relative text-xs">
                   <div className="absolute -left-5.25 top-1 bg-indigo-500 h-2 w-2 rounded-full border border-slate-950" />
@@ -132,7 +127,7 @@ export default function ClientPage() {
         {/* FOOTER */}
         <div className="pt-4 border-t border-slate-800 text-center">
           <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">
-            🔒 Ambiente em conformidade com as diretrizes da LGPD
+            Ambiente em conformidade com as diretrizes da LGPD
           </p>
         </div>
       </div>

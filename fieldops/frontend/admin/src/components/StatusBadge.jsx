@@ -1,5 +1,4 @@
 export default function StatusBadge({ status }) {
-  // Mapeamento de estilos baseado no enum vindo do banco de dados do Python
   const config = {
     AGENDADA: {
       text: "Agendada",

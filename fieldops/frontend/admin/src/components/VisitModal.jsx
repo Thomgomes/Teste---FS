@@ -22,19 +22,16 @@ export default function VisitModal({ isOpen, onClose, technicians, onSaveSuccess
     setError("");
 
     try {
-      // 🛡️ O endpoint /visits/ espera um JSON em formato snake_case estrito
       await api.request("/visits/", {
         method: "POST",
         body: JSON.stringify({
           client_name: clientName,
           address: address,
           technician_id: technicianId,
-          // 📅 Passa a string direta do input. O FastAPI digere o formato "YYYY-MM-DDTHH:MM" nativamente
           scheduled_at: scheduledAt, 
         }),
       });
 
-      // Limpa os estados do formulário após gravação com sucesso absoluto
       setClientName("");
       setAddress("");
       setTechnicianId("");
@@ -43,7 +40,6 @@ export default function VisitModal({ isOpen, onClose, technicians, onSaveSuccess
       onSaveSuccess(); 
       onClose(); 
     } catch (err) {
-      // 🇧🇷 Captura o detail tratado que alteramos no api.js ou joga o erro da validação
       setError(err.message || "Falha ao registrar nova ordem de serviço.");
     } finally {
       setLoading(false);
@@ -57,7 +53,7 @@ export default function VisitModal({ isOpen, onClose, technicians, onSaveSuccess
         {/* CABEÇALHO */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">
-            ➕ Agendar Nova Ordem de Campo
+            Agendar Nova Ordem de Campo
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold cursor-pointer text-sm">
             ✕
@@ -111,7 +107,7 @@ export default function VisitModal({ isOpen, onClose, technicians, onSaveSuccess
               <option value="">Selecione um profissional...</option>
               {technicians.map((tech) => (
                 <option key={tech.id} value={tech.id}>
-                  👷‍♂️ {tech.name}
+                  {tech.name}
                 </option>
               ))}
             </select>

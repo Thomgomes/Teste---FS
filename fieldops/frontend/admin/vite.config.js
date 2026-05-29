@@ -10,9 +10,9 @@ export default defineConfig({
   ],
   server: {
     port: 3000,
-    host: true, // Necessário para o Docker expor o serviço para fora do container
+    host: true,
     watch: {
-      usePolling: true, // Garante que o hot-reload funcione atualizando o navegador no Windows/Linux com Docker
+      usePolling: true,
     },
   },
 })
