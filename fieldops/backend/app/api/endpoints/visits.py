@@ -252,3 +252,46 @@ async def get_visit_by_id(
         )
         
     return visit
+
+# =========================================================================
+# 🚫 ENDPOINT: CANCELAR UMA VISITA (EXCLUSIVO ADMIN - ASYNC)
+# =========================================================================
+@router.patch("/{visit_id}/cancel", response_model=VisitResponse)
+async def cancel_visit(
+    visit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    """
+    Permite à central cancelar uma visita online. Isso força o estado terminal
+    que travará as sincronizações offline em conflito vindas do PWA.
+    """
+    query = (
+        select(models.Visit)
+        .where(and_(models.Visit.id == visit_id, models.Visit.company_id == current_user.company_id))
+        .options(selectinload(models.Visit.events), selectinload(models.Visit.attachments), selectinload(models.Visit.technician))
+    )
+    result = await db.execute(query)
+    visit = result.scalar_one_or_none()
+
+    if not visit:
+        raise HTTPException(status_code=404, detail="Visita não localizada.")
+
+    # 🛡️ Regra de negócio: Se já foi concluída, não pode mais cancelar
+    if visit.status == models.VisitStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Impossível cancelar uma ordem de serviço já concluída.")
+
+    visit.status = models.VisitStatus.CANCELED
+    
+    # Injeta o evento de cancelamento na timeline de auditoria
+    cancel_event = models.VisitEvent(
+        company_id=current_user.company_id,
+        visit_id=visit.id,
+        event_type="CANCELADA",
+        description=f"Ordem de serviço cancelada via Central Admin por: {current_user.name}",
+        idempotency_key=f"cancel-{uuid.uuid4()}"
+    )
+    
+    db.add(cancel_event)
+    await db.commit()
+    return visit
