@@ -217,3 +217,37 @@ async def upload_visit_photo(
         "mensagem": "Foto anexada com sucesso absoluto na V1 local!",
         "file_url": new_attachment.file_url
     }
+    
+# =========================================================================
+# 🔍 4. ENDPOINT: BUSCAR UMA VISITA ESPECÍFICA POR ID (ADMIN OU TÉCNICO)
+# =========================================================================
+@router.get("/{visit_id}", response_model=VisitResponse)
+async def get_visit_by_id(
+    visit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(require_any_role)
+):
+    query = (
+        select(models.Visit)
+        .where(
+            and_(
+                models.Visit.id == visit_id, 
+                models.Visit.company_id == current_user.company_id
+            )
+        )
+        .options(
+            selectinload(models.Visit.events),
+            selectinload(models.Visit.attachments),
+            selectinload(models.Visit.technician)
+        )
+    )
+    result = await db.execute(query)
+    visit = result.scalar_one_or_none()
+    
+    if not visit:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Ordem de serviço não localizada no sistema."
+        )
+        
+    return visit

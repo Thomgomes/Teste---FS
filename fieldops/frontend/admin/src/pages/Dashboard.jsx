@@ -1,17 +1,19 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-unused-vars */
 
-
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/api";
 import { useVisitFilters } from "../hooks/useVisitsFilters";
 import VisitRow from "../components/VisitRow";
-
+import VisitModal from "../components/VisitModal"; // ➕ Importação do Modal
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const storedUser = JSON.parse(localStorage.getItem("fieldops_user") || "{}");
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [refreshSignal, setRefreshSignal] = useState(0); // ⏱️ Sinalizador interno para recarregar a grade
 
   // 🪝 Toda a inteligência da URL unificada aqui
   const { filters, setFilter, queryString } = useVisitFilters();
@@ -29,7 +31,7 @@ export default function Dashboard() {
       .catch(err => console.error(err));
   }, []);
 
-  // Carrega as visitas aplicando os filtros reativos sincronizados da URL via queryString
+  // Carrega as visitas aplicando os filtros reativos e escutando o sinal de atualização do modal
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
@@ -37,7 +39,7 @@ export default function Dashboard() {
     
     api.request(`/visits${queryString}`)
       .then(data => { 
-        if (isMounted) setVisits(data); // 🛡️ CORRIGIDO: de setVisVisits para setVisits
+        if (isMounted) setVisits(data); 
       })
       .catch(err => { 
         if (isMounted) setError(err.message || "Não foi possível carregar as visitas."); 
@@ -47,11 +49,15 @@ export default function Dashboard() {
       });
 
     return () => { isMounted = false; };
-  }, [queryString]); 
+  }, [queryString, refreshSignal]); // 🔄 Re-executa se a URL mudar OU se uma nova visita for criada
 
   const handleLogout = () => {
     localStorage.clear();
     navigate("/", { replace: true });
+  };
+
+  const handleSaveSuccess = () => {
+    setRefreshSignal(prev => prev + 1); // Dispara o efeito de recarga da tabela
   };
 
   return (
@@ -93,21 +99,21 @@ export default function Dashboard() {
           </div>
           <button
             className="h-11 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl px-5 transition-colors shadow-md shadow-indigo-100 cursor-pointer flex items-center justify-center gap-2 w-full sm:w-auto"
-            onClick={() => alert("Próxima feature: Modal de criação")}
+            onClick={() => setIsModalOpen(true)} // 🔄 CORRIGIDO: Agora ativa o Modal perfeitamente
           >
             <span>➕ Nova Visita</span>
           </button>
         </div>
 
-        {/* 🔍 BARRA DE FILTROS REATIVOS ALTERADA PARA CONTEXTO DO HOOK (`filters` e `setFilter`) */}
+        {/* 🔍 BARRA DE FILTROS REATIVOS */}
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Filtrar por Status
             </label>
             <select
-              value={filters.status} // 🔄 Conectado ao hook
-              onChange={(e) => setFilter("status", e.target.value)} // 🔄 Modifica a URL na hora
+              value={filters.status}
+              onChange={(e) => setFilter("status", e.target.value)}
               className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all cursor-pointer"
             >
               <option value="">Todos os Status</option>
@@ -129,7 +135,6 @@ export default function Dashboard() {
               className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all cursor-pointer"
             >
               <option value="">Todos os Técnicos</option>
-              {/* 🧼 REMOVIDO O "Não Designado" DAQUI */}
               {technicians.map((tech) => (
                 <option key={tech.id} value={tech.id}>
                   {tech.name}
@@ -144,8 +149,8 @@ export default function Dashboard() {
             </label>
             <input
               type="date"
-              value={filters.date} // 🔄 Conectado ao hook
-              onChange={(e) => setFilter("date", e.target.value)} // 🔄 Modifica a URL na hora
+              value={filters.date}
+              onChange={(e) => setFilter("date", e.target.value)}
               className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all cursor-pointer"
             />
           </div>
@@ -201,6 +206,14 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      {/* ➕ Injeção do Modal de Criação */}
+      <VisitModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        technicians={technicians}
+        onSaveSuccess={handleSaveSuccess}
+      />
     </div>
   );
 }
