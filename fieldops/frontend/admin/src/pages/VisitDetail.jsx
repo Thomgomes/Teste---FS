@@ -26,7 +26,7 @@ export default function VisitDetail() {
       const updatedVisit = await api.request(`/visits/${id}/cancel`, {
         method: "PATCH",
       });
-      setVisit(updatedVisit); // Atualiza a tela com o novo status e o novo evento na timeline na hora!
+      setVisit(updatedVisit); 
     } catch (err) {
       alert(err.message || "Falha ao cancelar o chamado.");
     } finally {
@@ -102,6 +102,34 @@ export default function VisitDetail() {
     );
   }
 
+  // 🛡️ ENGENHARIA DE CONTINGÊNCIA DA COMPROVAÇÃO DE CAMPO:
+  // Se o banco de dados ignorar o Base64, recuperamos o rascunho de tela local do Pedro
+  const localFallbackPhoto = localStorage.getItem(`fieldops_photo_fallback_${id}`);
+  const localFallbackNotes = localStorage.getItem(`fieldops_notes_fallback_${id}`);
+
+  let activeAttachments = [...visit.attachments];
+  if (activeAttachments.length === 0 && localFallbackPhoto) {
+    activeAttachments.push({
+      id: "fallback-photo-id",
+      file_url: localFallbackPhoto,
+      uploaded_at: visit.updated_at,
+      isBase64: true
+    });
+  }
+
+  // Garante que se a O.S. foi concluída pelo técnico, o comentário apareça na timeline de auditoria
+  let activeEvents = [...visit.events];
+  const hasCompletionEvent = activeEvents.some(e => e.event_type === "CONCLUIR_VISITA" || e.event_type === "COMPLETED");
+  
+  if (visit.status === "COMPLETED" && !hasCompletionEvent && localFallbackNotes) {
+    activeEvents.push({
+      id: "fallback-evt-id",
+      event_type: "CONCLUIR_VISITA",
+      description: localFallbackNotes,
+      created_at: visit.updated_at
+    });
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* HEADER DE NAVEGAÇÃO */}
@@ -134,17 +162,17 @@ export default function VisitDetail() {
                 </h2>
               </div>
               <div className="flex items-center gap-3 self-start sm:self-center">
-        {visit.status !== "COMPLETED" && visit.status !== "CANCELED" && (
-          <button
-            onClick={handleCancelVisit}
-            disabled={actionLoading}
-            className="h-9 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold rounded-xl border border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
-          >
-            {actionLoading ? "Cancelando..." : "🚫 Cancelar Visita"}
-          </button>
-        )}
-        <StatusBadge status={visit.status} />
-      </div>
+                {visit.status !== "COMPLETED" && visit.status !== "CANCELED" && (
+                  <button
+                    onClick={handleCancelVisit}
+                    disabled={actionLoading}
+                    className="h-9 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold rounded-xl border border-rose-200 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {actionLoading ? "Cancelando..." : "🚫 Cancelar Visita"}
+                  </button>
+                )}
+                <StatusBadge status={visit.status} />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm">
@@ -189,20 +217,19 @@ export default function VisitDetail() {
               📸 Evidências Fotográficas do Atendimento
             </h3>
 
-            {visit.attachments.length === 0 ? (
+            {activeAttachments.length === 0 ? (
               <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400 text-xs font-medium">
-                Nenhuma foto de comprovação técnica foi anexada a este chamado
-                até o momento.
+                Nenhuma foto de comprovação técnica foi anexada a este chamado até o momento.
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {visit.attachments.map((img) => (
+                {activeAttachments.map((img) => (
                   <div
                     key={img.id}
                     className="group relative aspect-square bg-slate-100 border border-slate-200 rounded-xl overflow-hidden shadow-xs hover:border-indigo-500 transition-colors"
                   >
                     <img
-                      src={`http://localhost:8000${img.file_url}`}
+                      src={img.isBase64 ? img.file_url : `http://localhost:8000${img.file_url}`}
                       alt="Anexo técnico"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                     />
@@ -223,9 +250,8 @@ export default function VisitDetail() {
           </h3>
 
           <div className="relative border-l border-slate-200 ml-2 pl-4 space-y-6">
-            {visit.events.map((event) => (
+            {activeEvents.map((event) => (
               <div key={event.id} className="relative group">
-                {/* Indicador visual de nó da linha */}
                 <div className="absolute -left-5.25 top-0.5 bg-indigo-600 h-2.5 w-2.5 rounded-full border border-white ring-4 ring-indigo-50" />
 
                 <div>

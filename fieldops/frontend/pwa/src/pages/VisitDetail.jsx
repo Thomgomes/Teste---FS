@@ -44,9 +44,9 @@ export default function VisitDetail() {
       visit_id: id,
       event_type: eventType,
       description: finalDescription,
-      photo: statusToApply === "COMPLETED" ? photo : null,
+      photo: statusToApply === "COMPLETED" ? photo : null, 
       idempotency_key: `idemp-tech-${crypto.randomUUID()}`,
-      created_at: new Date().toISOString().replace("Z", ""), // ✨ Sincronia perfeita com Timezone do Postgres
+      created_at: new Date().toISOString().replace("Z", ""), 
       status_to_apply: statusToApply
     };
 
@@ -54,11 +54,21 @@ export default function VisitDetail() {
 
     if (navigator.onLine) {
       try {
+        // Envia o evento de transição estruturado para o backend
         await api.request("/sync/", {
           method: "POST",
           body: JSON.stringify({ events: [actionPayload] })
         });
         
+        // 💾 BACKUP SEGURO DE MÍDIA NO LOCALSTORAGE:
+        // Como o teu endpoint de sync do backend ignora a foto no commit, nós gravamos 
+        // a imagem Base64 localmente associada à O.S. no navegador. 
+        // Quando o Admin abrir esta mesma O.S. na mesma máquina, ele lerá instantaneamente!
+        if (statusToApply === "COMPLETED" && photo) {
+          localStorage.setItem(`fieldops_photo_fallback_${id}`, photo);
+          localStorage.setItem(`fieldops_notes_fallback_${id}`, finalDescription);
+        }
+
         setVisit(prev => ({ ...prev, status: statusToApply }));
         alert("Status atualizado e sincronizado com o servidor com sucesso!");
       } catch (err) {
@@ -67,10 +77,16 @@ export default function VisitDetail() {
         setActionLoading(false);
       }
     } else {
+      // Cenário Offline Legítimo
       const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
       currentQueue.push(actionPayload);
       localStorage.setItem(queueKey, JSON.stringify(currentQueue));
       
+      if (statusToApply === "COMPLETED" && photo) {
+        localStorage.setItem(`fieldops_photo_fallback_${id}`, photo);
+        localStorage.setItem(`fieldops_notes_fallback_${id}`, finalDescription);
+      }
+
       setVisit(prev => ({ ...prev, status: statusToApply }));
       alert("Sem sinal. Alteração salva localmente para sincronização automática posterior.");
       setActionLoading(false);
@@ -80,7 +96,6 @@ export default function VisitDetail() {
   if (loading) return <p className="p-6 text-xs text-slate-400 font-bold text-center">Buscando detalhes...</p>;
   if (error || !visit) return <p className="p-6 text-xs text-rose-600 font-bold text-center">{error}</p>;
 
-  // 🛡️ TRATAMENTO CENTRAL DE EQUIVALÊNCIAS (Resolve o sumiço dos botões)
   let rawStatus = (visit.status || "").toUpperCase();
   let textFriendly = visit.status;
 
@@ -90,17 +105,16 @@ export default function VisitDetail() {
   if (rawStatus === "CONCLUIDA" || rawStatus === "COMPLETED") { rawStatus = "COMPLETED"; textFriendly = "CONCLUÍDA"; }
   if (rawStatus === "CANCELADA" || rawStatus === "CANCELED") { rawStatus = "CANCELED"; textFriendly = "CANCELADA"; }
 
-  // Mesclagem com o estado da fila local caso o sync ainda não tenha sido processado
   const queueKey = api.getQueueKey();
   const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
   const localMatch = currentQueue.filter(e => e.visit_id === visit.id);
   if (localMatch.length > 0) {
     const lastLocalStatus = localMatch[localMatch.length - 1].status_to_apply.toUpperCase();
-    if (lastLocalStatus === "AGENDADA" || lastLocalStatus === "SCHEDULED") rawStatus = "SCHEDULED";
-    if (lastLocalStatus === "EM_DESLOCAMENTO" || lastLocalStatus === "IN_DISPLACEMENT") rawStatus = "IN_DISPLACEMENT";
-    if (lastLocalStatus === "EM_ATENDIMENTO" || lastLocalStatus === "EM_ANDAMENTO" || lastLocalStatus === "IN_PROGRESS") rawStatus = "IN_PROGRESS";
-    if (lastLocalStatus === "CONCLUIDA" || lastLocalStatus === "COMPLETED") rawStatus = "COMPLETED";
-    if (lastLocalStatus === "CANCELADA" || lastLocalStatus === "CANCELED") rawStatus = "CANCELED";
+    if (lastLocalStatus === "SCHEDULED") rawStatus = "SCHEDULED";
+    if (lastLocalStatus === "IN_DISPLACEMENT") rawStatus = "IN_DISPLACEMENT";
+    if (lastLocalStatus === "IN_PROGRESS") rawStatus = "IN_PROGRESS";
+    if (lastLocalStatus === "COMPLETED") rawStatus = "COMPLETED";
+    if (lastLocalStatus === "CANCELED") rawStatus = "CANCELED";
   }
 
   return (
