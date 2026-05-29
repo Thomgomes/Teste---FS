@@ -62,15 +62,7 @@ async def get_current_user(
         
     return user
 
-
-# =========================================================================
-# 🛡️ 3. VERIFICADORES DE CARGOS (ROLE-BASED ACCESS CONTROL - RBAC)
-# =========================================================================
 class RoleChecker:
-    """
-    Classe utilitária para travar rotas com base no cargo do usuário.
-    Garante que técnicos não acessem rotas administrativas.
-    """
     def __init__(self, allowed_roles: list[UserRole]):
         self.allowed_roles = allowed_roles
 
@@ -82,7 +74,6 @@ class RoleChecker:
             )
         return current_user
 
-# Atalhos limpos para usar direto nos parâmetros das rotas:
 require_admin = RoleChecker([UserRole.ADMIN])
 require_technician = RoleChecker([UserRole.TECHNICIAN])
 require_any_role = RoleChecker([UserRole.ADMIN, UserRole.TECHNICIAN])

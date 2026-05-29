@@ -12,10 +12,10 @@ async def run_seeds(db: AsyncSession) -> None:
     query_check = select(models.Company)
     result_check = await db.execute(query_check)
     if result_check.scalars().first() is not None:
-        print("🌱 [SEEDS] Banco de dados já possui registros. Operação abortada.")
+        print("Banco de dados já possui registros. Operação abortada.")
         return
 
-    print("🌱 [SEEDS] Banco vazio detectado. Injetando massa de teste obrigatória...")
+    print("Banco vazio detectado. Injetando massa de teste obrigatória...")
 
     company = models.Company(
         name="Empresa Mult fictícia",
@@ -75,4 +75,4 @@ async def run_seeds(db: AsyncSession) -> None:
         db.add(visit)
 
     await db.commit()
-    print("[SEEDS] Carga inicial realizada com sucesso absoluto!")
+    print("Carga inicial realizada com sucesso absoluto!")

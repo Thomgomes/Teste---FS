@@ -5,7 +5,7 @@ from httpx import AsyncClient
 pytestmark = pytest.mark.asyncio
 
 
-# 🔐 1. TESTE: FLUXO FELIZ DE AUTENTICAÇÃO (LOGIN COM SUCESSO)
+# TESTE: FLUXO FELIZ DE AUTENTICAÇÃO (LOGIN COM SUCESSO)
 async def test_login_success(client: AsyncClient, test_data: dict):
     payload = {
         "username": test_data["admin_a"].email,
