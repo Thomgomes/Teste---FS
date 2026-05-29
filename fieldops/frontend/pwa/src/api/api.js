@@ -9,19 +9,23 @@ export const api = {
     localStorage.setItem("tech_token", token);
   },
 
+  getQueueKey() {
+    const email = localStorage.getItem("tech_email") || "guest";
+    return `fieldops_queue_${email}`;
+  },
+
   logout() {
     localStorage.removeItem("tech_token");
     localStorage.removeItem("tech_name");
+    localStorage.removeItem("tech_email");
     localStorage.removeItem("fieldops_offline_visitas");
   },
 
   async request(endpoint, options = {}) {
     const token = this.getToken();
     
-    // 🛡️ CORREÇÃO DE OURO: Permite que a tela defina x-www-form-urlencoded
-    // Se a tela não passar nada, adota application/json por padrão
     const headers = {
-      "Content-Type": options.headers?.["Content-Type"] || "application/json",
+      "Content-Type": "application/json",
       ...(options.headers || {}),
     };
 
@@ -37,7 +41,6 @@ export const api = {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        
         let errorMessage = "Falha na comunicação corporativa.";
         if (errorData.detail) {
           if (typeof errorData.detail === "string") {
@@ -46,24 +49,20 @@ export const api = {
             errorMessage = errorData.detail[0].msg;
           }
         }
-        throw new Error(errorMessage);
+        const apiError = new Error(errorMessage);
+        apiError.isServerError = true; 
+        throw apiError;
       }
 
-      const data = await response.json();
+      return await response.json();
+    } catch (error) {
+      if (error.isServerError) {
+        throw error;
+      }
       
       if (endpoint === "/visits/" && (!options.method || options.method === "GET")) {
-        localStorage.setItem("fieldops_offline_visitas", JSON.stringify(data));
-      }
-
-      return data;
-    } catch (error) {
-      if (error.name === "TypeError" || !navigator.onLine) {
-        if (endpoint === "/visits/" && (!options.method || options.method === "GET")) {
-          const cachedData = localStorage.getItem("fieldops_offline_visitas");
-          if (cachedData) {
-            return JSON.parse(cachedData);
-          }
-        }
+        const cachedData = localStorage.getItem("fieldops_offline_visitas");
+        if (cachedData) return JSON.parse(cachedData);
       }
       throw error;
     }

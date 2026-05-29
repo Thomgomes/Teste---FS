@@ -27,11 +27,6 @@ export default function Login() {
         body: formData.toString(),
       });
 
-      console.log("🚀 Payload de Login validado no DevTools:", data);
-
-      // 🛡️ CASAMENTO PERFEITO DE CONTRATO COM O TEU BACKEND:
-      // Mapeamos diretamente da raiz do objeto (data.role e data.name)
-      // e convertemos para minúsculo para bater com "tecnico"
       const userRole = (data.role || "").toLowerCase();
       const userName = data.name || "Técnico";
 
@@ -39,9 +34,9 @@ export default function Login() {
         throw new Error("Acesso negado. Este aplicativo é exclusivo para técnicos de campo.");
       }
 
-      // Salva os estados de autenticação corporativos no LocalStorage do PWA
       api.setToken(data.access_token);
       localStorage.setItem("tech_name", userName);
+      localStorage.setItem("tech_email", email); // 🚀 Salva o e-mail do usuário logado
       
       navigate("/visitas");
     } catch (err) {

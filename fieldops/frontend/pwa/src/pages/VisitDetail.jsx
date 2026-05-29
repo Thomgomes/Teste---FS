@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/api";
-import OfflineIndicator from "../components/OffilineIndicator";
+import OfflineIndicator from "../components/OfflineIndicator";
 
 export default function VisitDetail() {
   const { id } = useParams();
@@ -12,13 +12,11 @@ export default function VisitDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   
-  // 📝 Estados para capturar os dados exigidos pela prova
   const [notes, setNotes] = useState("");
   const [photo, setPhoto] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
-    // Busca a listagem local/remota para achar a visita correspondente
     api.request("/visits/")
       .then((list) => {
         const match = list.find((v) => v.id === id);
@@ -29,66 +27,81 @@ export default function VisitDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Converte a foto capturada pelo celular do técnico para Base64 (para persistência local)
   const handlePhotoChange = (e) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhoto(reader.result); // String em formato Base64
-      };
+      reader.onloadend = () => setPhoto(reader.result);
       reader.readAsDataURL(file);
     }
   };
 
-  // 🔥 ALTERA A INSTÂNCIA DO SERVIÇO (Mecânica Otimista e Fila FIFO Local)
   const handleStateTransition = async (eventType, statusToApply, defaultDescription) => {
     setActionLoading(true);
     const finalDescription = statusToApply === "COMPLETED" ? notes || defaultDescription : defaultDescription;
 
-    // Constrói o payload exatamente como o teu schema 'VisitEventSchema' do backend espera
     const actionPayload = {
       visit_id: id,
       event_type: eventType,
       description: finalDescription,
       photo: statusToApply === "COMPLETED" ? photo : null,
       idempotency_key: `idemp-tech-${crypto.randomUUID()}`,
-      created_at: new Date().toISOString(),
+      created_at: new Date().toISOString().replace("Z", ""), // ✨ Sincronia perfeita com Timezone do Postgres
       status_to_apply: statusToApply
     };
 
-    // 1. Atualização Otimista: Muda o estado visual no PWA imediatamente
-    setVisit((prev) => ({ ...prev, status: statusToApply }));
+    const queueKey = api.getQueueKey();
 
-    try {
-      // Força queda controlada se o navegador estiver sem internet
-      if (!navigator.onLine) {
-        throw new TypeError("Failed to fetch");
+    if (navigator.onLine) {
+      try {
+        await api.request("/sync/", {
+          method: "POST",
+          body: JSON.stringify({ events: [actionPayload] })
+        });
+        
+        setVisit(prev => ({ ...prev, status: statusToApply }));
+        alert("Status atualizado e sincronizado com o servidor com sucesso!");
+      } catch (err) {
+        alert(`Erro de validação da API: ${err.message}`);
+      } finally {
+        setActionLoading(false);
       }
-
-      // Envia o lote contendo o evento de transição direto para o teu endpoint /sync/
-      await api.request("/sync/", {
-        method: "POST",
-        body: JSON.stringify({ events: [actionPayload] })
-      });
-      
-      alert("Status atualizado e sincronizado com o servidor!");
-      navigate("/visitas");
-    } catch (err) {
-      // 💾 SALVAMENTO NA FILA FIFO LOCAL (LocalStorage)
-      const currentQueue = JSON.parse(localStorage.getItem("fieldops_pwa_queue") || "[]");
+    } else {
+      const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
       currentQueue.push(actionPayload);
-      localStorage.setItem("fieldops_pwa_queue", JSON.stringify(currentQueue));
+      localStorage.setItem(queueKey, JSON.stringify(currentQueue));
       
-      alert("Modo Offline: Alteração guardada localmente na fila de sincronização.");
-      navigate("/visitas");
-    } finally {
+      setVisit(prev => ({ ...prev, status: statusToApply }));
+      alert("Sem sinal. Alteração salva localmente para sincronização automática posterior.");
       setActionLoading(false);
     }
   };
 
-  if (loading) return <p className="p-6 text-xs text-slate-400 font-bold text-center">Buscando detalhes da O.S...</p>;
+  if (loading) return <p className="p-6 text-xs text-slate-400 font-bold text-center">Buscando detalhes...</p>;
   if (error || !visit) return <p className="p-6 text-xs text-rose-600 font-bold text-center">{error}</p>;
+
+  // 🛡️ TRATAMENTO CENTRAL DE EQUIVALÊNCIAS (Resolve o sumiço dos botões)
+  let rawStatus = (visit.status || "").toUpperCase();
+  let textFriendly = visit.status;
+
+  if (rawStatus === "AGENDADA" || rawStatus === "SCHEDULED") { rawStatus = "SCHEDULED"; textFriendly = "AGENDADA"; }
+  if (rawStatus === "EM_DESLOCAMENTO" || rawStatus === "IN_DISPLACEMENT") { rawStatus = "IN_DISPLACEMENT"; textFriendly = "EM DESLOCAMENTO"; }
+  if (rawStatus === "EM_ATENDIMENTO" || rawStatus === "EM_ANDAMENTO" || rawStatus === "IN_PROGRESS") { rawStatus = "IN_PROGRESS"; textFriendly = "EM ATENDIMENTO"; }
+  if (rawStatus === "CONCLUIDA" || rawStatus === "COMPLETED") { rawStatus = "COMPLETED"; textFriendly = "CONCLUÍDA"; }
+  if (rawStatus === "CANCELADA" || rawStatus === "CANCELED") { rawStatus = "CANCELED"; textFriendly = "CANCELADA"; }
+
+  // Mesclagem com o estado da fila local caso o sync ainda não tenha sido processado
+  const queueKey = api.getQueueKey();
+  const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
+  const localMatch = currentQueue.filter(e => e.visit_id === visit.id);
+  if (localMatch.length > 0) {
+    const lastLocalStatus = localMatch[localMatch.length - 1].status_to_apply.toUpperCase();
+    if (lastLocalStatus === "AGENDADA" || lastLocalStatus === "SCHEDULED") rawStatus = "SCHEDULED";
+    if (lastLocalStatus === "EM_DESLOCAMENTO" || lastLocalStatus === "IN_DISPLACEMENT") rawStatus = "IN_DISPLACEMENT";
+    if (lastLocalStatus === "EM_ATENDIMENTO" || lastLocalStatus === "EM_ANDAMENTO" || lastLocalStatus === "IN_PROGRESS") rawStatus = "IN_PROGRESS";
+    if (lastLocalStatus === "CONCLUIDA" || lastLocalStatus === "COMPLETED") rawStatus = "COMPLETED";
+    if (lastLocalStatus === "CANCELADA" || lastLocalStatus === "CANCELED") rawStatus = "CANCELED";
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -101,23 +114,22 @@ export default function VisitDetail() {
       </header>
 
       <main className="p-4 flex-1 flex flex-col justify-between space-y-6">
-        {/* CARD PRINCIPAL DA VISITA */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
           <div>
-            <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md uppercase">{visit.status}</span>
+            <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md uppercase">
+              {textFriendly}
+            </span>
             <h2 className="text-lg font-black text-slate-900 mt-2">{visit.client_name}</h2>
             <p className="text-xs font-medium text-slate-500 mt-1">📍 {visit.address}</p>
           </div>
           <div className="pt-3 border-t border-slate-100 text-xs font-semibold text-slate-500">
-            📅 Agendado para: {new Date(visit.scheduled_at).toLocaleString("pt-BR")}
+            📅 Janela: {new Date(visit.scheduled_at).toLocaleString("pt-BR")}
           </div>
         </div>
 
-        {/* 📋 FORMULÁRIO DE CONCLUSÃO (Aparece apenas se a O.S. for iniciada) */}
-        {visit.status === "IN_PROGRESS" && (
+        {rawStatus === "IN_PROGRESS" && (
           <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4 shadow-xs">
             <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Relatório de Atendimento</h4>
-            
             <div>
               <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">Observações Técnicas</label>
               <textarea
@@ -127,7 +139,6 @@ export default function VisitDetail() {
                 onChange={(e) => setNotes(e.target.value)}
               />
             </div>
-
             <div>
               <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">Anexar Foto Comprovante</label>
               <input
@@ -145,42 +156,40 @@ export default function VisitDetail() {
           </div>
         )}
 
-        {/* 🎛️ BOTÕES DINÂMICOS DE TRANSIÇÃO DE STATUS */}
         <div className="space-y-3">
-          {visit.status === "SCHEDULED" && (
+          {rawStatus === "SCHEDULED" && (
             <button 
               disabled={actionLoading}
-              onClick={() => handleStateTransition("INICIAR_DESLOCAMENTO", "IN_DISPLACEMENT", "O técnico iniciou o deslocamento até o local.")}
+              onClick={() => handleStateTransition("INICIAR_DESLOCAMENTO", "IN_DISPLACEMENT", "O técnico iniciou o deslocamento.")}
               className="w-full h-12 bg-indigo-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
-              🚀 Iniciar Deslocamento
+              {actionLoading ? "Processando..." : "🚀 Iniciar Deslocamento"}
             </button>
           )}
 
-          {visit.status === "IN_DISPLACEMENT" && (
+          {rawStatus === "IN_DISPLACEMENT" && (
             <button 
               disabled={actionLoading}
-              onClick={() => handleStateTransition("INICIAR_ATENDIMENTO", "IN_PROGRESS", "O técnico chegou ao destino e iniciou a O.S.")}
+              onClick={() => handleStateTransition("INICIAR_ATENDIMENTO", "IN_PROGRESS", "O técnico chegou ao destino.")}
               className="w-full h-12 bg-amber-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
-              ⚡ Iniciar Atendimento
+              {actionLoading ? "Processando..." : "⚡ Iniciar Atendimento"}
             </button>
           )}
 
-          {visit.status === "IN_PROGRESS" && (
+          {rawStatus === "IN_PROGRESS" && (
             <button 
               disabled={actionLoading}
-              onClick={() => handleStateTransition("CONCLUIR_VISITA", "COMPLETED", "Visita técnica concluída com sucesso.")}
+              onClick={() => handleStateTransition("CONCLUIR_VISITA", "COMPLETED", "Visita técnica concluída.")}
               className="w-full h-12 bg-emerald-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
-              ✅ Concluir Ordem de Serviço
+              {actionLoading ? "Processando..." : "✅ Concluir Ordem de Serviço"}
             </button>
           )}
 
-          {/* ESTADO TERMINAL TRANCADO */}
-          {(visit.status === "COMPLETED" || visit.status === "CANCELED") && (
+          {(rawStatus === "COMPLETED" || rawStatus === "CANCELED") && (
             <div className="bg-slate-100 border border-slate-200 rounded-xl p-4 text-center text-xs text-slate-500 font-bold uppercase">
-              🔒 Atendimento Encerrado ({visit.status})
+              🔒 Atendimento Encerrado
             </div>
           )}
         </div>
