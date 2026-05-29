@@ -6,6 +6,13 @@ import uuid
 from typing import List, Optional
 from app.db.models import VisitStatus
 
+
+class UserResponseMini(BaseModel):
+    id: uuid.UUID
+    name: str
+    email: str
+
+    model_config = ConfigDict(from_attributes=True)
 class VisitCreate(BaseModel):
     client_name: str
     address: str
@@ -39,5 +46,6 @@ class VisitResponse(BaseModel):
     updated_at: datetime
     events: List[VisitEventResponse] = []
     attachments: List[VisitAttachmentResponse] = []
+    technician: Optional[UserResponseMini] = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,59 +1,53 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable no-unused-vars */
+
+
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/api";
+import { useVisitFilters } from "../hooks/useVisitsFilters";
 import VisitRow from "../components/VisitRow";
+
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const storedUser = JSON.parse(localStorage.getItem("fieldops_user") || "{}");
 
+  // 🪝 Toda a inteligência da URL unificada aqui
+  const { filters, setFilter, queryString } = useVisitFilters();
+
   // Estados de dados da API
   const [visits, setVisits] = useState([]);
+  const [technicians, setTechnicians] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Estados dos Filtros Reativos (Mobile-First)
-  const [statusFilter, setStatusFilter] = useState("");
-  const [dateFilter, setDateFilter] = useState("");
+  // Coleta a lista de técnicos uma única vez para o combobox
+  useEffect(() => {
+    api.request('/visits/technicians-list')
+      .then(setTechnicians)
+      .catch(err => console.error(err));
+  }, []);
 
-  // Carrega as visitas aplicando os filtros reativos via Query Params
+  // Carrega as visitas aplicando os filtros reativos sincronizados da URL via queryString
   useEffect(() => {
     let isMounted = true;
+    setLoading(true);
+    setError("");
+    
+    api.request(`/visits${queryString}`)
+      .then(data => { 
+        if (isMounted) setVisits(data); // 🛡️ CORRIGIDO: de setVisVisits para setVisits
+      })
+      .catch(err => { 
+        if (isMounted) setError(err.message || "Não foi possível carregar as visitas."); 
+      })
+      .finally(() => { 
+        if (isMounted) setLoading(false); 
+      });
 
-    async function fetchVisits() {
-      setLoading(true);
-      setError("");
-      try {
-        // Monta a query string dinamicamente
-        const params = new URLSearchParams();
-        if (statusFilter) params.append("status", statusFilter);
-        if (dateFilter) params.append("date", dateFilter);
-
-        const queryString = params.toString() ? `?${params.toString()}` : "";
-        const endpoint = queryString ? `/visits${queryString}` : "/visits";
-        const data = await api.request(endpoint);
-
-        if (isMounted) {
-          setVisits(data);
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError("Não foi possível carregar a grade de visitas.");
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    }
-
-    fetchVisits();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [statusFilter, dateFilter]); // Reexecuta imediatamente ao mudar qualquer filtro
+    return () => { isMounted = false; };
+  }, [queryString]); 
 
   const handleLogout = () => {
     localStorage.clear();
@@ -62,7 +56,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* 🔝 HEADER: Totalmente responsivo */}
+      {/* 🔝 HEADER */}
       <header className="bg-white border-b border-slate-200 min-h-16 flex flex-col sm:flex-row items-center justify-between px-6 py-3 sm:py-0 gap-3 shadow-xs">
         <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
           <span className="text-xl font-black text-indigo-600 tracking-tight">
@@ -105,16 +99,16 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* 🔍 BARRA DE FILTROS REATIVOS (Mobile-First: Empilha no celular, alinha no desktop) */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* 🔍 BARRA DE FILTROS REATIVOS ALTERADA PARA CONTEXTO DO HOOK (`filters` e `setFilter`) */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Filtrar por Status
             </label>
             <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all"
+              value={filters.status} // 🔄 Conectado ao hook
+              onChange={(e) => setFilter("status", e.target.value)} // 🔄 Modifica a URL na hora
+              className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all cursor-pointer"
             >
               <option value="">Todos os Status</option>
               <option value="SCHEDULED">Agendada</option>
@@ -127,13 +121,32 @@ export default function Dashboard() {
 
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+              Técnico Alocado
+            </label>
+            <select
+              value={filters.technicianId}
+              onChange={(e) => setFilter("technician_id", e.target.value)}
+              className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all cursor-pointer"
+            >
+              <option value="">Todos os Técnicos</option>
+              {/* 🧼 REMOVIDO O "Não Designado" DAQUI */}
+              {technicians.map((tech) => (
+                <option key={tech.id} value={tech.id}>
+                  {tech.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Filtrar por Data Específica
             </label>
             <input
               type="date"
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
-              className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all"
+              value={filters.date} // 🔄 Conectado ao hook
+              onChange={(e) => setFilter("date", e.target.value)} // 🔄 Modifica a URL na hora
+              className="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-600 focus:bg-white transition-all cursor-pointer"
             />
           </div>
         </div>
@@ -145,28 +158,11 @@ export default function Dashboard() {
           </div>
         ) : loading ? (
           <div className="flex flex-col items-center justify-center py-12 text-slate-400 gap-3">
-            <svg
-              className="animate-spin h-8 w-8 text-indigo-600"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
+            <svg className="animate-spin h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            <span className="text-xs font-bold uppercase tracking-wider">
-              Sincronizando grade...
-            </span>
+            <span className="text-xs font-bold uppercase tracking-wider">Sincronizando grade...</span>
           </div>
         ) : visits.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center shadow-xs">
@@ -175,16 +171,15 @@ export default function Dashboard() {
             </p>
           </div>
         ) : (
-          /* CONTAINER RESPONSIVO MESTRE */
           <div className="w-full">
-            {/* 📱 Lista de Cards: Visível apenas no Celular */}
+            {/* Lista de Cards Mobile */}
             <div className="block md:hidden">
               {visits.map((visit) => (
                 <VisitRow key={visit.id} visit={visit} />
               ))}
             </div>
 
-            {/* 💻 Tabela Estruturada: Visível apenas a partir de telas Médias (Desktop) */}
+            {/* Tabela Estruturada Desktop */}
             <div className="hidden md:block bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
               <table className="w-full text-left border-collapse">
                 <thead>

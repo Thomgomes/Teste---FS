@@ -23,7 +23,7 @@ async def run_seeds(db: AsyncSession) -> None:
 
     # 2. Criar 1 Empresa Piloto
     company = models.Company(
-        name="FieldOps Soluções Industriais",
+        name="Empresa Mult fictícia",
         cnpj="12345678000199"
     )
     db.add(company)
@@ -32,19 +32,26 @@ async def run_seeds(db: AsyncSession) -> None:
     # 3. Criar 2 Usuários (1 Admin e 1 Técnico)
     admin_user = models.User(
         company_id=company.id,
-        name="Thomás Administrador",
+        name="Gabriel Umberto",
         email="admin@fieldops.com.br",
         password_hash=security.get_password_hash("admin123"),
         role=models.UserRole.ADMIN
     )
     tech_user = models.User(
         company_id=company.id,
-        name="Carlos Técnico de Campo",
+        name="Pedro Bonfim",
         email="tech@fieldops.com.br",
         password_hash=security.get_password_hash("tech123"),
         role=models.UserRole.TECHNICIAN
     )
-    db.add_all([admin_user, tech_user])
+    tech_user2 = models.User(
+        company_id=company.id,
+        name="Carlos Emanuel",
+        email="tech2@fieldops.com.br",
+        password_hash=security.get_password_hash("tech123"),
+        role=models.UserRole.TECHNICIAN
+    )
+    db.add_all([admin_user, tech_user, tech_user2])
     await db.flush()
 
     # 4. Criar 10 Visitas distribuídas nos estados do seu Enum
@@ -62,9 +69,13 @@ async def run_seeds(db: AsyncSession) -> None:
     ]
 
     for i, (status_type, client, addr) in enumerate(status_list):
+        # 🧠 ESTRATÉGIA: Os índices de 0 a 5 (6 visitas) ficam com o Carlos.
+        # Os índices 6, 7, 8 e 9 (4 visitas) ficam como None (Não designado)
+        tech_id = tech_user.id if i < 6 else tech_user2.id
+
         visit = models.Visit(
             company_id=company.id,
-            technician_id=tech_user.id,
+            technician_id=tech_id, # <--- Vincula dinamicamente aqui
             client_name=client,
             address=addr,
             status=status_type,

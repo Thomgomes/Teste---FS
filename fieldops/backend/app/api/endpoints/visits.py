@@ -67,7 +67,6 @@ async def create_visit(
     await db.commit()
     
     # Em vez do refresh cego, fazemos uma query explícita trazendo as tabelas filhas de forma segura
-    from sqlalchemy.orm import selectinload
     refresh_query = (
         select(models.Visit)
         .where(models.Visit.id == new_visit.id)
@@ -89,8 +88,9 @@ async def create_visit(
 # =========================================================================
 @router.get("/", response_model=List[VisitResponse])
 async def list_visits(
-    status_filter: Optional[models.VisitStatus] = Query(None, alias="status"),
-    tech_id_filter: Optional[uuid.UUID] = Query(None, alias="technician_id"),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    tech_id_filter: Optional[str] = Query(None, alias="technician_id"),
+    date_filter: Optional[str] = Query(None, alias="date"),
     db: AsyncSession = Depends(get_db),
     current_user: models.User = Depends(require_any_role)
 ) -> List[models.Visit]:
@@ -100,20 +100,55 @@ async def list_visits(
     if current_user.role == models.UserRole.TECHNICIAN:
         filters.append(models.Visit.technician_id == current_user.id)
     elif tech_id_filter:
-        filters.append(models.Visit.technician_id == tech_id_filter)
+        try:
+            filters.append(models.Visit.technician_id == uuid.UUID(tech_id_filter))
+        except ValueError:
+            pass
         
     if status_filter:
         filters.append(models.Visit.status == status_filter)
         
+    if date_filter:
+        try:
+            from datetime import datetime, time
+            # O input type="date" do HTML devolve no formato "YYYY-MM-DD"
+            parsed_date = datetime.strptime(date_filter, "%Y-%m-%d").date()
+            
+            # Define o início (00:00:00) e o fim (23:59:59) daquele dia para a busca na tabela
+            start_datetime = datetime.combine(parsed_date, time.min)
+            end_datetime = datetime.combine(parsed_date, time.max)
+            
+            filters.append(models.Visit.scheduled_at.between(start_datetime, end_datetime))
+        except ValueError:
+            # Caso venha uma string de data corrompida, ignora silenciosamente para não quebrar o app
+            pass
     # selectinload garante o carregamento assíncrono das tabelas filhas (evita erro de LazyLoading)
     query = (
         select(models.Visit)
         .where(and_(*filters))
-        .options(selectinload(models.Visit.events), selectinload(models.Visit.attachments))
+        .options(selectinload(models.Visit.events), selectinload(models.Visit.attachments), selectinload(models.Visit.technician))
         .order_by(models.Visit.scheduled_at.asc())
     )
     result = await db.execute(query)
     return result.scalars().all()
+
+# =========================================================================
+# 👥 2.1 ENDPOINT: LISTAR TÉCNICOS PARA O COMBO DO FILTRO (COLE AQUI)
+# =========================================================================
+@router.get("/technicians-list", response_model=List[dict])
+async def list_company_technicians(
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    query = select(models.User.id, models.User.name).where(
+        and_(
+            models.User.company_id == current_user.company_id,
+            models.User.role == models.UserRole.TECHNICIAN
+        )
+    )
+    result = await db.execute(query)
+    rows = result.all()
+    return [{"id": str(row.id), "name": row.name} for row in rows]
 
 
 # =========================================================================

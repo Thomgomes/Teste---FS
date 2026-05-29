@@ -10,7 +10,7 @@ export default function VisitRow({ visit }) {
 
   return (
     <>
-      {/* 📱 MODO CELULAR (Padrão): Renderiza como um card clicável, largo e isolado */}
+      {/* 📱 MODO CELULAR (Padrão): Cards empilhados */}
       <div
         onClick={handleRowClick}
         className="block md:hidden bg-white p-4 rounded-xl border border-slate-200 shadow-xs mb-3 active:bg-slate-50 cursor-pointer transition-colors"
@@ -27,14 +27,17 @@ export default function VisitRow({ visit }) {
         </p>
 
         <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-xs text-slate-600">
-          <span>👷‍♂️ {visit.technician?.name || "Não designado"}</span>
+          {/* 👷‍♂️ Lê o relacionamento direto injetado pelo back-end via selectinload */}
+          <span className="font-semibold text-slate-700">
+            👷‍♂️ {visit.technician?.name}
+          </span>
           <span className="font-medium text-slate-500">
             {new Date(visit.scheduled_at).toLocaleDateString("pt-BR")}
           </span>
         </div>
       </div>
 
-      {/* 💻 MODO DESKTOP: Renderiza como uma linha tradicional de tabela quando a tela cresce */}
+      {/* 💻 MODO DESKTOP: Linha tradicional de tabela */}
       <tr
         onClick={handleRowClick}
         className="hidden md:table-row border-b border-slate-200 hover:bg-slate-50/80 transition-colors cursor-pointer text-sm"
@@ -46,7 +49,8 @@ export default function VisitRow({ visit }) {
           {visit.address}
         </td>
         <td className="px-6 py-4 text-slate-600 font-medium">
-          {visit.technician?.name || "Não designado"}
+          {/* 👷‍♂️ Sem buscas na memória do front, renderização direta e limpa */}
+          {visit.technician?.name}
         </td>
         <td className="px-6 py-4 text-slate-500 whitespace-nowrap">
           {new Date(visit.scheduled_at).toLocaleString("pt-BR", {
