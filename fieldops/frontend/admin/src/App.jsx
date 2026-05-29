@@ -29,6 +29,7 @@ export default function App() {
         {/* Rota Pública: Entrada */}
         <Route path="/" element={<Login />} />
 
+        <Route path="/v/:token" element={<ClientPage />} />
         {/* Rotas Privadas e Protegidas para o Administrador */}
         <Route
           path="/dashboard"
@@ -49,8 +50,6 @@ export default function App() {
         />
 
         <Route path="*" element={<Navigate to="/" replace />} />
-
-        <Route path="/v/:token" element={<ClientPage />} />
       </Routes>
     </BrowserRouter>
   );

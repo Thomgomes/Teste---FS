@@ -11,13 +11,14 @@ export default function VisitDetail() {
   const [visit, setVisit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  
+
   const [notes, setNotes] = useState("");
   const [photoPreview, setPhotoPreview] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
-    api.request("/visits/")
+    api
+      .request("/visits/")
       .then((list) => {
         const match = list.find((v) => v.id === id);
         if (match) setVisit(match);
@@ -36,10 +37,17 @@ export default function VisitDetail() {
     }
   };
 
-  const handleStateTransition = async (eventType, statusToApply, defaultDescription) => {
+  const handleStateTransition = async (
+    eventType,
+    statusToApply,
+    defaultDescription,
+  ) => {
     setActionLoading(true);
     // Usa as anotações do textarea caso seja a conclusão, ou a descrição padrão das etapas
-    const finalDescription = statusToApply === "COMPLETED" ? notes || defaultDescription : defaultDescription;
+    const finalDescription =
+      statusToApply === "COMPLETED"
+        ? notes || defaultDescription
+        : defaultDescription;
 
     const actionPayload = {
       visit_id: id,
@@ -48,7 +56,7 @@ export default function VisitDetail() {
       photo: null, // Deixamos nulo conforme alinhado para evitar conflito de persistência
       idempotency_key: `idemp-tech-${crypto.randomUUID()}`,
       created_at: new Date().toISOString().replace("Z", ""), // Sincronia de fuso com o Postgres
-      status_to_apply: statusToApply
+      status_to_apply: statusToApply,
     };
 
     const queueKey = api.getQueueKey();
@@ -57,10 +65,10 @@ export default function VisitDetail() {
       try {
         await api.request("/sync/", {
           method: "POST",
-          body: JSON.stringify({ events: [actionPayload] })
+          body: JSON.stringify({ events: [actionPayload] }),
         });
-        
-        setVisit(prev => ({ ...prev, status: statusToApply }));
+
+        setVisit((prev) => ({ ...prev, status: statusToApply }));
         alert("Status atualizado e sincronizado com o servidor com sucesso!");
       } catch (err) {
         alert(`Erro de validação da API: ${err.message}`);
@@ -72,31 +80,61 @@ export default function VisitDetail() {
       const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
       currentQueue.push(actionPayload);
       localStorage.setItem(queueKey, JSON.stringify(currentQueue));
-      
-      setVisit(prev => ({ ...prev, status: statusToApply }));
-      alert("Sem sinal. Relatório de texto salvo localmente para sincronização automática.");
+
+      setVisit((prev) => ({ ...prev, status: statusToApply }));
+      alert(
+        "Sem sinal. Relatório de texto salvo localmente para sincronização automática.",
+      );
       setActionLoading(false);
     }
   };
 
-  if (loading) return <p className="p-6 text-xs text-slate-400 font-bold text-center">Buscando detalhes...</p>;
-  if (error || !visit) return <p className="p-6 text-xs text-rose-600 font-bold text-center">{error}</p>;
+  if (loading)
+    return (
+      <p className="p-6 text-xs text-slate-400 font-bold text-center">
+        Buscando detalhes...
+      </p>
+    );
+  if (error || !visit)
+    return (
+      <p className="p-6 text-xs text-rose-600 font-bold text-center">{error}</p>
+    );
 
   // NORMALIZAÇÃO DE ENUMS DE STATUS
   let rawStatus = (visit.status || "").toUpperCase();
   let textFriendly = visit.status;
 
-  if (rawStatus === "AGENDADA" || rawStatus === "SCHEDULED") { rawStatus = "SCHEDULED"; textFriendly = "AGENDADA"; }
-  if (rawStatus === "EM_DESLOCAMENTO" || rawStatus === "IN_DISPLACEMENT") { rawStatus = "IN_DISPLACEMENT"; textFriendly = "EM DESLOCAMENTO"; }
-  if (rawStatus === "EM_ATENDIMENTO" || rawStatus === "EM_ANDAMENTO" || rawStatus === "IN_PROGRESS") { rawStatus = "IN_PROGRESS"; textFriendly = "EM ATENDIMENTO"; }
-  if (rawStatus === "CONCLUIDA" || rawStatus === "COMPLETED") { rawStatus = "COMPLETED"; textFriendly = "CONCLUÍDA"; }
-  if (rawStatus === "CANCELADA" || rawStatus === "CANCELED") { rawStatus = "CANCELED"; textFriendly = "CANCELADA"; }
+  if (rawStatus === "AGENDADA" || rawStatus === "SCHEDULED") {
+    rawStatus = "SCHEDULED";
+    textFriendly = "AGENDADA";
+  }
+  if (rawStatus === "EM_DESLOCAMENTO" || rawStatus === "IN_DISPLACEMENT") {
+    rawStatus = "IN_DISPLACEMENT";
+    textFriendly = "EM DESLOCAMENTO";
+  }
+  if (
+    rawStatus === "EM_ATENDIMENTO" ||
+    rawStatus === "EM_ANDAMENTO" ||
+    rawStatus === "IN_PROGRESS"
+  ) {
+    rawStatus = "IN_PROGRESS";
+    textFriendly = "EM ATENDIMENTO";
+  }
+  if (rawStatus === "CONCLUIDA" || rawStatus === "COMPLETED") {
+    rawStatus = "COMPLETED";
+    textFriendly = "CONCLUÍDA";
+  }
+  if (rawStatus === "CANCELADA" || rawStatus === "CANCELED") {
+    rawStatus = "CANCELED";
+    textFriendly = "CANCELADA";
+  }
 
   const queueKey = api.getQueueKey();
   const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
-  const localMatch = currentQueue.filter(e => e.visit_id === visit.id);
+  const localMatch = currentQueue.filter((e) => e.visit_id === visit.id);
   if (localMatch.length > 0) {
-    const lastLocalStatus = localMatch[localMatch.length - 1].status_to_apply.toUpperCase();
+    const lastLocalStatus =
+      localMatch[localMatch.length - 1].status_to_apply.toUpperCase();
     if (lastLocalStatus === "SCHEDULED") rawStatus = "SCHEDULED";
     if (lastLocalStatus === "IN_DISPLACEMENT") rawStatus = "IN_DISPLACEMENT";
     if (lastLocalStatus === "IN_PROGRESS") rawStatus = "IN_PROGRESS";
@@ -109,9 +147,16 @@ export default function VisitDetail() {
       <OfflineIndicator />
 
       <header className="bg-white border-b border-slate-200 h-16 flex items-center px-4 gap-3">
-        <button onClick={() => navigate("/visitas")} className="text-slate-400 text-sm font-bold cursor-pointer">⬅️ Voltar</button>
+        <button
+          onClick={() => navigate("/visitas")}
+          className="text-slate-400 text-sm font-bold cursor-pointer"
+        >
+          ⬅️ Voltar
+        </button>
         <div className="h-4 w-px bg-slate-200" />
-        <span className="text-xs font-black text-slate-500 uppercase">Ordem de Serviço</span>
+        <span className="text-xs font-black text-slate-500 uppercase">
+          Ordem de Serviço
+        </span>
       </header>
 
       <main className="p-4 flex-1 flex flex-col justify-between space-y-6">
@@ -120,19 +165,62 @@ export default function VisitDetail() {
             <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md uppercase">
               {textFriendly}
             </span>
-            <h2 className="text-lg font-black text-slate-900 mt-2">{visit.client_name}</h2>
-            <p className="text-xs font-medium text-slate-500 mt-1">📍 {visit.address}</p>
+            <h2 className="text-lg font-black text-slate-900 mt-2">
+              {visit.client_name}
+            </h2>
+            <p className="text-xs font-medium text-slate-500 mt-1">
+              📍 {visit.address}
+            </p>
           </div>
           <div className="pt-3 border-t border-slate-100 text-xs font-semibold text-slate-500">
             📅 Janela: {new Date(visit.scheduled_at).toLocaleString("pt-BR")}
           </div>
+          {/* LINK DE ACOMPANHAMENTO DO CLIENTE */}
+          {visit.public_token &&
+            (() => {
+              const clientUrl = `http://localhost:3000/v/${visit.public_token}`;
+              return (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 space-y-2 shadow-xs">
+                  <h4 className="text-[9px] font-black text-indigo-500 uppercase tracking-wider">
+                    🔗 Link de Acompanhamento do Cliente
+                  </h4>
+                  <p className="text-[10px] font-mono text-indigo-700 break-all bg-white border border-indigo-100 rounded-xl px-3 py-2">
+                    {clientUrl}
+                  </p>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard
+                        .writeText(clientUrl)
+                        .then(() => {
+                          alert(
+                            "Link copiado! Envie para o cliente via WhatsApp ou SMS.",
+                          );
+                        })
+                        .catch(() => {
+                          alert(
+                            "Não foi possível copiar automaticamente. Copie manualmente:\n\n" +
+                              clientUrl,
+                          );
+                        });
+                    }}
+                    className="w-full h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-colors"
+                  >
+                    📋 Copiar Link
+                  </button>
+                </div>
+              );
+            })()}
         </div>
 
         {rawStatus === "IN_PROGRESS" && (
           <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4 shadow-xs">
-            <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">Relatório de Atendimento</h4>
+            <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">
+              Relatório de Atendimento
+            </h4>
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">Observações Técnicas</label>
+              <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+                Observações Técnicas
+              </label>
               <textarea
                 className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-600 focus:bg-white transition-all font-medium h-20 resize-none"
                 placeholder="Relate os procedimentos ou peças trocadas..."
@@ -141,7 +229,9 @@ export default function VisitDetail() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">Anexar Foto Comprovante (Demonstrativo)</label>
+              <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+                Anexar Foto Comprovante (Demonstrativo)
+              </label>
               <input
                 type="file"
                 accept="image/*"
@@ -150,7 +240,11 @@ export default function VisitDetail() {
               />
               {photoPreview && (
                 <div className="mt-3 relative rounded-xl overflow-hidden border border-slate-200 h-24 bg-slate-100 flex items-center justify-center">
-                  <img src={photoPreview} alt="Preview visual" className="h-full object-cover" />
+                  <img
+                    src={photoPreview}
+                    alt="Preview visual"
+                    className="h-full object-cover"
+                  />
                 </div>
               )}
             </div>
@@ -159,9 +253,15 @@ export default function VisitDetail() {
 
         <div className="space-y-3">
           {rawStatus === "SCHEDULED" && (
-            <button 
+            <button
               disabled={actionLoading}
-              onClick={() => handleStateTransition("INICIAR_DESLOCAMENTO", "IN_DISPLACEMENT", "O técnico iniciou o deslocamento.")}
+              onClick={() =>
+                handleStateTransition(
+                  "INICIAR_DESLOCAMENTO",
+                  "IN_DISPLACEMENT",
+                  "O técnico iniciou o deslocamento.",
+                )
+              }
               className="w-full h-12 bg-indigo-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
               {actionLoading ? "Processando..." : "🚀 Iniciar Deslocamento"}
@@ -169,9 +269,15 @@ export default function VisitDetail() {
           )}
 
           {rawStatus === "IN_DISPLACEMENT" && (
-            <button 
+            <button
               disabled={actionLoading}
-              onClick={() => handleStateTransition("INICIAR_ATENDIMENTO", "IN_PROGRESS", "O técnico chegou ao destino.")}
+              onClick={() =>
+                handleStateTransition(
+                  "INICIAR_ATENDIMENTO",
+                  "IN_PROGRESS",
+                  "O técnico chegou ao destino.",
+                )
+              }
               className="w-full h-12 bg-amber-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
               {actionLoading ? "Processando..." : "⚡ Iniciar Atendimento"}
@@ -179,12 +285,20 @@ export default function VisitDetail() {
           )}
 
           {rawStatus === "IN_PROGRESS" && (
-            <button 
+            <button
               disabled={actionLoading}
-              onClick={() => handleStateTransition("CONCLUIR_VISITA", "COMPLETED", notes || "Visita técnica concluída.")}
+              onClick={() =>
+                handleStateTransition(
+                  "CONCLUIR_VISITA",
+                  "COMPLETED",
+                  notes || "Visita técnica concluída.",
+                )
+              }
               className="w-full h-12 bg-emerald-600 text-white font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer shadow-md disabled:opacity-50"
             >
-              {actionLoading ? "Processando..." : "✅ Concluir Ordem de Serviço"}
+              {actionLoading
+                ? "Processando..."
+                : "✅ Concluir Ordem de Serviço"}
             </button>
           )}
 
