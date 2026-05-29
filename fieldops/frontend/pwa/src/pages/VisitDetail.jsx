@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../api/api";
@@ -285,7 +284,7 @@ export default function VisitDetail() {
                     }}
                     className="w-full h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-colors"
                   >
-                    📋 Copiar Link
+                    Copiar Link
                   </button>
                 </div>
               );

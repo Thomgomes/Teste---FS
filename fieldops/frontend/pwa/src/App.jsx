@@ -3,7 +3,6 @@ import Login from "./pages/Login";
 import VisitsList from "./pages/VisitsList";
 import VisitDetail from "./pages/VisitDetail";
 
-// Componente Guardião: Bloqueia técnicos não autenticados
 function GuardedRoute({ children }) {
   const token = localStorage.getItem("tech_token");
   return token ? children : <Navigate to="/" replace />;

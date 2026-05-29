@@ -36,7 +36,7 @@ export default function Login() {
 
       api.setToken(data.access_token);
       localStorage.setItem("tech_name", userName);
-      localStorage.setItem("tech_email", email); // 🚀 Salva o e-mail do usuário logado
+      localStorage.setItem("tech_email", email);
       
       navigate("/visitas");
     } catch (err) {
@@ -50,7 +50,6 @@ export default function Login() {
     <div className="min-h-screen bg-slate-900 flex flex-col justify-center p-4">
       <div className="max-w-md w-full mx-auto bg-white rounded-3xl p-6 shadow-xl space-y-6">
         <div className="text-center">
-          <span className="text-xl">👷‍♂️</span>
           <h1 className="text-xl font-black text-slate-900 mt-2 tracking-tight">FieldOps Tech</h1>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-1">Portal de Operações de Campo</p>
         </div>

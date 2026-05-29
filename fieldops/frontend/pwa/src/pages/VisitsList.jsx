@@ -96,7 +96,7 @@ export default function VisitsList() {
       {queueCount > 0 && (
         <div className="m-4 bg-indigo-50 border border-indigo-100 rounded-2xl p-4 text-xs flex items-center justify-between">
           <div>
-            <p className="font-black text-indigo-900 uppercase tracking-tight">📦 Ações Pendentes</p>
+            <p className="font-black text-indigo-900 uppercase tracking-tight">Ações Pendentes</p>
             <p className="text-indigo-600 font-medium mt-0.5">Existem {queueCount} atualizações salvas localmente.</p>
           </div>
           <button 
@@ -109,7 +109,7 @@ export default function VisitsList() {
       )}
 
       <main className="flex-1 p-4 space-y-4">
-        <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">🗓️ Chamados do Dia</h3>
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Chamados do Dia</h3>
 
         {loading ? (
           <p className="text-xs text-slate-400 font-medium text-center py-8 animate-pulse">Buscando chamados...</p>
@@ -120,7 +120,6 @@ export default function VisitsList() {
         ) : (
           <div className="space-y-3">
             {visits.map((item) => {
-              // 🛡️ NORMALIZAÇÃO DE EXIBIÇÃO NA LISTAGEM:
               let displayStatus = (item.status || "").toUpperCase();
               let friendlyText = item.status;
 
@@ -151,7 +150,7 @@ export default function VisitsList() {
                       {friendlyText}
                     </span>
                   </div>
-                  <p className="text-xs font-medium text-slate-500">📍 {item.address}</p>
+                  <p className="text-xs font-medium text-slate-500">{item.address}</p>
                 </div>
               );
             })}
