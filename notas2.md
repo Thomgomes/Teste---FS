@@ -1,7 +1,8 @@
 # Notas
-**Projeto**: FieldOps
-**Candidato:** Thomás D'Angelo de Almeida Gomes
-**Objetivo:** Registro de decisões, trade-offs e justificativas técnicas do desafio prático.
+
+**Projeto**: FieldOps  
+**Candidato:** Thomás D'Angelo de Almeida Gomes  
+**Objetivo:** Registro de decisões, trade-offs e justificativas técnicas do desafio prático, diferenciando o que foi de fato entregue na V1 do que é visão de evolução.
 
 ---
 
@@ -157,85 +158,29 @@
 
 Ferramentas de IA generativa foram utilizadas como **copiloto**, nunca como fonte final de verdade.
 
-## 3. Uso de Inteligência Artificial e Validação
+### Onde a IA foi aplicada
 
-Ferramentas de Inteligência Artificial foram utilizadas como **apoio ao processo de estudo, modelagem e implementação**, nunca como substituto de entendimento ou como gerador irrestrito de código. Todos os dados utilizados nesta etapa foram cuidadosamente filtrados para evitar qualquer exposição de informação sensível ou sigilosa.
+- **Boilerplates assíncronos:**  
+  Apoio na configuração inicial de `AsyncSession`, `create_async_engine`, mapeamentos do SQLAlchemy 2.0 Async e uso correto de `asyncpg`.
+- **Massa de dados de teste:**  
+  Ajuda na geração de payloads complexos para sincronização em lote, CNPJs fictícios, UUIDs, datas e times para testes de integração.
+- **Exploração de edge cases:**  
+  Discussão arquitetural de cenários como:
+  - “Admin cancela, técnico conclui offline”,
+  - “Fila de sync muito grande depois de dias offline”.
 
-### 3.1 Contexto de Estudo e Preparação
+### Como os resultados foram validados
 
-Antes de iniciar a implementação da arquitetura e do código, todo o escopo do sistema foi definido manualmente com base no enunciado da prova e em pesquisas prévias.  
-Ferramentas como **Gemini** e **NotebookLM** foram usadas para:
+Nenhuma sugestão de IA entrou no repositório sem passar por:
 
-- Localizar materiais de estudo sobre tópicos menos familiares (por exemplo, conceitos de offline-first, PWA, FastAPI e Django para sistemas assíncronos, indexedDB e etc).
-- Organizar e explicar esses conteúdos em linguagem acessível, permitindo que as decisões de arquitetura fossem tomadas com entendimento real do impacto técnico.
-- Ajudar a estruturar um “guia pessoal” sobre PWA, esclarecendo as diferenças entre um app web tradicional e um PWA (instalação, Service Worker, manifest, cache, etc.).
+- **Validação estática:**  
+  Ferramentas de linting/tipagem (por exemplo, mypy) e validação de schemas Pydantic.
+- **Observação de queries SQL:**  
+  Logs do SQLAlchemy foram revisados para identificar queries N+1, uso correto de transações e comportamento do pool de conexões.
+- **Testes automatizados:**  
+  Testes de integração e de unidade (quando presentes) foram usados como gate principal para garantir que a lógica de negócio se comportasse conforme o esperado.
 
-Na prática, houve um período dedicado (domingo, segunda e início da terça) exclusivamente para estudo com apoio dessas ferramentas, antes de escrever a arquitetura e o código.
-
-### 3.2 Modelagem de Arquitetura e Dados
-
-As ferramentas de IA foram usadas como revisores técnicos de modelos já concebidos pelo candidato:
-
-- **Diagrama de Arquitetura (Mermaid):**
-  - O diagrama foi inicialmente desenhado manualmente.
-  - A IA foi usada para revisar a coerência entre os blocos (fronts, backend, storage, mensageria, observabilidade) e apontar inconsistências ou redundâncias.
-- **Modelo de Dados (DBML):**
-  - A estrutura das tabelas (`companies`, `users`, `visits`, `visit_events`, `visit_attachments`) foi definida primeiro com base nos requisitos.
-  - A IA ajudou a revisar o DBML, verificando se chaves primárias, estrangeiras, índices e notas batiam com o diagrama em Mermaid.
-- **Schemas de API (Pydantic):**
-  - Foram sugeridas estruturas de schemas para inputs/outputs da API.
-  - Esses schemas foram comparados com o modelo de banco para garantir alinhamento de tipos, campos obrigatórios e relacionamentos.
-
-Em todos os casos, a IA funcionou como “segunda leitura” para detectar desalinhamentos entre arquitetura visual, modelo de dados e contratos de API.
-
-### 3.3 Geração de Dados de Seed e Testes
-
-- **Seeds de banco:**
-  - A IA auxiliou na geração de dados fictícios iniciais (nomes, e-mails, UUIDs, datas) para popular o banco.
-  - Os registros finais (por exemplo, nomes como “Gabriel Umberto”, e-mails e senhas) foram revisados e ajustados manualmente.
-- **Testes automatizados:**
-  - A IA ajudou a pensar em cenários de teste focados em:
-    - caminhos críticos de backend (login, agendamento de visita, sync offline → online),
-    - validação de idempotência.
-  - A partir dessas ideias, os testes foram escritos e adaptados, garantindo que refletissem fielmente as regras de negócio descritas nos documentos.
-- **README:**
-  - A IA também foi utilizada para apoiar a escrita inicial do README, organizando a documentação de setup, execução e visão geral da solução.
-  - Mesmo assim, o conteúdo final foi revisado manualmente e validado na prática, garantindo que os comandos, instruções e fluxos descritos realmente funcionassem no ambiente do projeto.
-
-### 3.4 Apoio à Implementação de Frontend e PWA
-
-No frontend, a IA foi utilizada principalmente como acelerador de produtividade, respeitando a decisão de manter o foco em funcionalidade e não em design elaborado:
-
-- **Tailwind e layout do dashboard:**
-  - O ponto de partida foi um dashboard antigo já existente, do qual foram reaproveitadas cores e lógica de responsividade.
-  - A IA foi instruída a gerar classes Tailwind e estruturas de layout com base nesse visual, mantendo consistência e reduzindo o tempo de escrita de CSS utilitário.
-- **PWA e Service Worker:**
-  - A IA ajudou a estruturar um “passo a passo mental” de PWA (manifest, Service Worker, cache de assets, instalação).
-  - Isso foi importante porque, apesar de já ter noção teórica de PWA, não tinha experiência prática prévia; a IA serviu como guia para evitar erros conceituais.
-
-### 3.5 Suporte em Debug e Diagnóstico
-
-Durante o desenvolvimento, a IA também foi usada como apoio para:
-
-- Investigar possíveis causas de bugs e conflitos (por exemplo, comportamento de rotas, problemas de CORS, erros de fetch, comportamentos inesperados no React).
-- Acelerar o reconhecimento de padrões de erro comuns, sugerindo hipóteses para serem testadas localmente.
-
-Em todos os casos, a IA foi usada como ferramenta de diagnóstico e brainstorming; a confirmação e correção definitiva sempre foram feitas via:
-
-- leitura direta de logs,
-- inspeção do código,
-- e reexecução de testes automatizados.
-
-### 3.6 Garantias de Validação
-
-Independentemente do uso de IA em partes do processo, todo resultado passou por validação manual rigorosa:
-
-- **Coerência com requisitos da prova:**  
-  Cada feature foi cruzada com o enunciado para garantir que o que foi implementado realmente respondia ao escopo solicitado.
-- **Execução de testes automatizados nos caminhos críticos:**  
-  As rotas centrais (autenticação, fluxo de visitas, sync) foram exercitadas via testes de backend.
-- **Revisão cruzada entre arquitetura, modelo de dados e código:**  
-  Diagrama Mermaid, DBML e schemas Pydantic foram alinhados para evitar divergências de comportamento entre documentos e implementação.
+---
 
 ## 4. Limitações Conhecidas da Solução
 
