@@ -15,14 +15,33 @@ export default function Login() {
     setError("");
 
     try {
+      const formData = new URLSearchParams();
+      formData.append("username", email);
+      formData.append("password", password);
+
       const data = await api.request("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: formData.toString(),
       });
 
-      // 🛡️ Salva as credenciais específicas do técnico no escopo do PWA
+      console.log("🚀 Payload de Login validado no DevTools:", data);
+
+      // 🛡️ CASAMENTO PERFEITO DE CONTRATO COM O TEU BACKEND:
+      // Mapeamos diretamente da raiz do objeto (data.role e data.name)
+      // e convertemos para minúsculo para bater com "tecnico"
+      const userRole = (data.role || "").toLowerCase();
+      const userName = data.name || "Técnico";
+
+      if (userRole !== "tecnico") {
+        throw new Error("Acesso negado. Este aplicativo é exclusivo para técnicos de campo.");
+      }
+
+      // Salva os estados de autenticação corporativos no LocalStorage do PWA
       api.setToken(data.access_token);
-      localStorage.setItem("tech_name", data.user.name);
+      localStorage.setItem("tech_name", userName);
       
       navigate("/visitas");
     } catch (err) {

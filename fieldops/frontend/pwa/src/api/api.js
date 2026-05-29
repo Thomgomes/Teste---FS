@@ -11,14 +11,17 @@ export const api = {
 
   logout() {
     localStorage.removeItem("tech_token");
+    localStorage.removeItem("tech_name");
     localStorage.removeItem("fieldops_offline_visitas");
   },
 
   async request(endpoint, options = {}) {
     const token = this.getToken();
     
+    // 🛡️ CORREÇÃO DE OURO: Permite que a tela defina x-www-form-urlencoded
+    // Se a tela não passar nada, adota application/json por padrão
     const headers = {
-      "Content-Type": "application/json",
+      "Content-Type": options.headers?.["Content-Type"] || "application/json",
       ...(options.headers || {}),
     };
 
@@ -34,24 +37,30 @@ export const api = {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || "Falha na comunicação corporativa.");
+        
+        let errorMessage = "Falha na comunicação corporativa.";
+        if (errorData.detail) {
+          if (typeof errorData.detail === "string") {
+            errorMessage = errorData.detail;
+          } else if (Array.isArray(errorData.detail) && errorData.detail[0]?.msg) {
+            errorMessage = errorData.detail[0].msg;
+          }
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
       
-      // 💾 Se for a listagem de visitas de campo bem-sucedida, atualiza o cache offline
       if (endpoint === "/visits/" && (!options.method || options.method === "GET")) {
         localStorage.setItem("fieldops_offline_visitas", JSON.stringify(data));
       }
 
       return data;
     } catch (error) {
-      // 📶 INTERCEPTOR DE REDE (FALLBACK OFFLINE CRÍTICO)
-      if (error.message.includes("Failed to fetch") || !navigator.onLine) {
+      if (error.name === "TypeError" || !navigator.onLine) {
         if (endpoint === "/visits/" && (!options.method || options.method === "GET")) {
           const cachedData = localStorage.getItem("fieldops_offline_visitas");
           if (cachedData) {
-            console.warn("⚠️ Dispositivo sem sinal de rede. Servindo dados do cache local.");
             return JSON.parse(cachedData);
           }
         }
