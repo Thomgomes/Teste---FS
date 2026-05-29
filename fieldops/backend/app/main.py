@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi.staticfiles import StaticFiles
+
 from app.core.config import settings
 
 from app.db.database import engine, AsyncSessionLocal
@@ -35,6 +37,8 @@ app.include_router(visits.router, prefix=f"{settings.API_V1_STR}/visits", tags=[
 app.include_router(sync.router, prefix=f"{settings.API_V1_STR}/sync", tags=["Sincronização Offline PWA"])
 
 app.include_router(public.router, prefix=f"{settings.API_V1_STR}/public", tags=["Acompanhamento Público"])
+
+app.mount("/static/uploaded_images", StaticFiles(directory="/app/uploaded_images", check_dir=False), name="uploaded_images")
 
 # 🚀 Evento que roda assim que o FastAPI inicializa
 @app.on_event("startup")

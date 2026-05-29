@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 const API_URL = "http://localhost:8000/api/v1";
 
 export const api = {
@@ -66,5 +67,59 @@ export const api = {
       }
       throw error;
     }
-  }
+  },
+
+  async uploadPhoto(visitId, fileOrBlob, filename = "foto.jpg") {
+    const token = this.getToken();
+    const formData = new FormData();
+    formData.append("file", fileOrBlob, filename);
+
+    const response = await fetch(`${API_URL}/visits/${visitId}/attachments`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Falha ao enviar foto.");
+    }
+
+    return await response.json();
+  },
+
+  async syncQueue() {
+    const queueKey = this.getQueueKey();
+    const queue = JSON.parse(localStorage.getItem(queueKey) || "[]");
+
+    if (queue.length === 0) return { synced: 0, errors: 0 };
+
+    const remaining = [];
+    let synced = 0;
+    let errors = 0;
+
+    for (const item of queue) {
+      try {
+        if (item._type === "PHOTO_UPLOAD") {
+          const fetchRes = await fetch(item.base64);
+          const blob = await fetchRes.blob();
+          await this.uploadPhoto(item.visit_id, blob, item.filename || "foto.jpg");
+        } else {
+          await this.request("/sync/", {
+            method: "POST",
+            body: JSON.stringify({ events: [item] }),
+          });
+        }
+        synced++;
+      } catch (err) {
+        remaining.push(item);
+        errors++;
+      }
+    }
+
+    localStorage.setItem(queueKey, JSON.stringify(remaining));
+    return { synced, errors };
+  },
 };

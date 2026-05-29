@@ -13,7 +13,7 @@ export default function VisitDetail() {
   const [error, setError] = useState("");
 
   const [notes, setNotes] = useState("");
-  const [photoPreview, setPhotoPreview] = useState(null);
+  const [photos, setPhotos] = useState([]);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
@@ -28,13 +28,58 @@ export default function VisitDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handlePhotoChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
+  const handlePhotosChange = (e) => {
+    const files = Array.from(e.target.files);
+    const MAX = 20;
+    const remaining = MAX - photos.length;
+    const toAdd = files.slice(0, remaining);
+
+    toAdd.forEach((file) => {
       const reader = new FileReader();
-      reader.onloadend = () => setPhotoPreview(reader.result);
+      reader.onloadend = () => {
+        setPhotos((prev) => [
+          ...prev,
+          { file, preview: reader.result, base64: reader.result },
+        ]);
+      };
       reader.readAsDataURL(file);
+    });
+
+    e.target.value = "";
+  };
+
+  const removePhoto = (index) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const uploadPhotosOnline = async (visitId) => {
+    for (const photo of photos) {
+      try {
+        await api.uploadPhoto(visitId, photo.file, photo.file.name);
+      } catch (err) {
+        console.error(err);
+      }
     }
+  };
+
+  const enqueuePhotosOffline = (visitId) => {
+    if (photos.length === 0) return;
+
+    const queueKey = api.getQueueKey();
+    const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
+
+    photos.forEach((photo) => {
+      currentQueue.push({
+        _type: "PHOTO_UPLOAD",
+        visit_id: visitId,
+        base64: photo.base64,
+        filename: photo.file.name,
+        idempotency_key: `photo-${crypto.randomUUID()}`,
+        created_at: new Date().toISOString(),
+      });
+    });
+
+    localStorage.setItem(queueKey, JSON.stringify(currentQueue));
   };
 
   const handleStateTransition = async (
@@ -43,7 +88,7 @@ export default function VisitDetail() {
     defaultDescription,
   ) => {
     setActionLoading(true);
-    // Usa as anotações do textarea caso seja a conclusão, ou a descrição padrão das etapas
+
     const finalDescription =
       statusToApply === "COMPLETED"
         ? notes || defaultDescription
@@ -53,9 +98,9 @@ export default function VisitDetail() {
       visit_id: id,
       event_type: eventType,
       description: finalDescription,
-      photo: null, // Deixamos nulo conforme alinhado para evitar conflito de persistência
+      photo: null,
       idempotency_key: `idemp-tech-${crypto.randomUUID()}`,
-      created_at: new Date().toISOString().replace("Z", ""), // Sincronia de fuso com o Postgres
+      created_at: new Date().toISOString().replace("Z", ""),
       status_to_apply: statusToApply,
     };
 
@@ -68,23 +113,42 @@ export default function VisitDetail() {
           body: JSON.stringify({ events: [actionPayload] }),
         });
 
+        if (photos.length > 0) {
+          await uploadPhotosOnline(id);
+        }
+
         setVisit((prev) => ({ ...prev, status: statusToApply }));
-        alert("Status atualizado e sincronizado com o servidor com sucesso!");
+        setPhotos([]);
+
+        const photoMsg =
+          photos.length > 0 ? ` + ${photos.length} foto(s) enviada(s).` : "";
+
+        alert(`Status atualizado e sincronizado com o servidor com sucesso!${photoMsg}`);
       } catch (err) {
+        console.error(err);
         alert(`Erro de validação da API: ${err.message}`);
       } finally {
         setActionLoading(false);
       }
     } else {
-      // Modo Offline Legítimo
       const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
       currentQueue.push(actionPayload);
       localStorage.setItem(queueKey, JSON.stringify(currentQueue));
 
+      enqueuePhotosOffline(id);
+
       setVisit((prev) => ({ ...prev, status: statusToApply }));
+
+      const photoMsg =
+        photos.length > 0
+          ? ` + ${photos.length} foto(s) salva(s) para sincronização.`
+          : "";
+
       alert(
-        "Sem sinal. Relatório de texto salvo localmente para sincronização automática.",
+        `Sem sinal. Relatório de texto salvo localmente para sincronização automática.${photoMsg}`,
       );
+
+      setPhotos([]);
       setActionLoading(false);
     }
   };
@@ -95,12 +159,12 @@ export default function VisitDetail() {
         Buscando detalhes...
       </p>
     );
+
   if (error || !visit)
     return (
       <p className="p-6 text-xs text-rose-600 font-bold text-center">{error}</p>
     );
 
-  // NORMALIZAÇÃO DE ENUMS DE STATUS
   let rawStatus = (visit.status || "").toUpperCase();
   let textFriendly = visit.status;
 
@@ -132,15 +196,22 @@ export default function VisitDetail() {
   const queueKey = api.getQueueKey();
   const currentQueue = JSON.parse(localStorage.getItem(queueKey) || "[]");
   const localMatch = currentQueue.filter((e) => e.visit_id === visit.id);
+
   if (localMatch.length > 0) {
-    const lastLocalStatus =
-      localMatch[localMatch.length - 1].status_to_apply.toUpperCase();
-    if (lastLocalStatus === "SCHEDULED") rawStatus = "SCHEDULED";
-    if (lastLocalStatus === "IN_DISPLACEMENT") rawStatus = "IN_DISPLACEMENT";
-    if (lastLocalStatus === "IN_PROGRESS") rawStatus = "IN_PROGRESS";
-    if (lastLocalStatus === "COMPLETED") rawStatus = "COMPLETED";
-    if (lastLocalStatus === "CANCELED") rawStatus = "CANCELED";
+    const lastLocal = localMatch[localMatch.length - 1];
+    if (lastLocal.status_to_apply) {
+      const lastLocalStatus = lastLocal.status_to_apply.toUpperCase();
+      if (lastLocalStatus === "SCHEDULED") rawStatus = "SCHEDULED";
+      if (lastLocalStatus === "IN_DISPLACEMENT") rawStatus = "IN_DISPLACEMENT";
+      if (lastLocalStatus === "IN_PROGRESS") rawStatus = "IN_PROGRESS";
+      if (lastLocalStatus === "COMPLETED") rawStatus = "COMPLETED";
+      if (lastLocalStatus === "CANCELED") rawStatus = "CANCELED";
+    }
   }
+
+  const pendingPhotos = currentQueue.filter(
+    (e) => e._type === "PHOTO_UPLOAD" && e.visit_id === id,
+  ).length;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -157,6 +228,12 @@ export default function VisitDetail() {
         <span className="text-xs font-black text-slate-500 uppercase">
           Ordem de Serviço
         </span>
+
+        {pendingPhotos > 0 && (
+          <span className="ml-auto text-[9px] font-black bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">
+            📸 {pendingPhotos} foto(s) na fila
+          </span>
+        )}
       </header>
 
       <main className="p-4 flex-1 flex flex-col justify-between space-y-6">
@@ -172,10 +249,11 @@ export default function VisitDetail() {
               📍 {visit.address}
             </p>
           </div>
+
           <div className="pt-3 border-t border-slate-100 text-xs font-semibold text-slate-500">
             📅 Janela: {new Date(visit.scheduled_at).toLocaleString("pt-BR")}
           </div>
-          {/* LINK DE ACOMPANHAMENTO DO CLIENTE */}
+
           {visit.public_token &&
             (() => {
               const clientUrl = `http://localhost:3000/v/${visit.public_token}`;
@@ -184,9 +262,11 @@ export default function VisitDetail() {
                   <h4 className="text-[9px] font-black text-indigo-500 uppercase tracking-wider">
                     🔗 Link de Acompanhamento do Cliente
                   </h4>
+
                   <p className="text-[10px] font-mono text-indigo-700 break-all bg-white border border-indigo-100 rounded-xl px-3 py-2">
                     {clientUrl}
                   </p>
+
                   <button
                     onClick={() => {
                       navigator.clipboard
@@ -217,6 +297,7 @@ export default function VisitDetail() {
             <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">
               Relatório de Atendimento
             </h4>
+
             <div>
               <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
                 Observações Técnicas
@@ -228,24 +309,48 @@ export default function VisitDetail() {
                 onChange={(e) => setNotes(e.target.value)}
               />
             </div>
+
             <div>
               <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
-                Anexar Foto Comprovante (Demonstrativo)
+                Anexar Fotos Comprovantes ({photos.length}/20)
               </label>
+
               <input
                 type="file"
                 accept="image/*"
-                onChange={handlePhotoChange}
+                multiple
+                onChange={handlePhotosChange}
                 className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
               />
-              {photoPreview && (
-                <div className="mt-3 relative rounded-xl overflow-hidden border border-slate-200 h-24 bg-slate-100 flex items-center justify-center">
-                  <img
-                    src={photoPreview}
-                    alt="Preview visual"
-                    className="h-full object-cover"
-                  />
+
+              {photos.length > 0 && (
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {photos.map((photo, idx) => (
+                    <div
+                      key={idx}
+                      className="relative rounded-xl overflow-hidden border border-slate-200 h-24 bg-slate-100 flex items-center justify-center"
+                    >
+                      <img
+                        src={photo.preview}
+                        alt={`Preview visual ${idx + 1}`}
+                        className="h-full w-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(idx)}
+                        className="absolute top-1 right-1 w-6 h-6 rounded-full bg-rose-600 text-white text-xs font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
                 </div>
+              )}
+
+              {!navigator.onLine && photos.length > 0 && (
+                <p className="mt-2 text-[10px] font-bold text-amber-600">
+                  Essas fotos serão enviadas quando a conexão voltar.
+                </p>
               )}
             </div>
           </div>

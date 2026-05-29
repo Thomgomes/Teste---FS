@@ -207,30 +207,31 @@ export default function VisitDetail() {
               📸 Evidências Fotográficas do Atendimento
             </h3>
 
-            {visit.attachments.length === 0 ? (
-              <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400 text-xs font-medium">
-                Nenhuma foto de comprovação técnica foi anexada a este chamado
-                até o momento.
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {visit.attachments.map((img) => (
-                  <div
-                    key={img.id}
-                    className="group relative aspect-square bg-slate-100 border border-slate-200 rounded-xl overflow-hidden shadow-xs hover:border-indigo-500 transition-colors"
-                  >
-                    <img
-                      src={`http://localhost:8000${img.file_url}`}
-                      alt="Anexo técnico"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                    />
-                    <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-slate-900/60 to-transparent p-2 text-[9px] text-white font-medium">
-                      {new Date(img.uploaded_at).toLocaleDateString("pt-BR")}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {visit.attachments && visit.attachments.length > 0 && (
+  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
+    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-100 pb-2">
+      📸 Fotos Anexadas ({visit.attachments.length})
+    </h3>
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+      {visit.attachments.map((att) => (
+        <a
+          key={att.id}
+          href={`http://localhost:8000${att.file_url}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block rounded-xl overflow-hidden border border-slate-200 aspect-square bg-slate-100 hover:opacity-90 transition-opacity"
+        >
+          <img
+            src={`http://localhost:8000${att.file_url}`}
+            alt="Foto do atendimento"
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        </a>
+      ))}
+    </div>
+  </div>
+)}
           </div>
         </div>
 
